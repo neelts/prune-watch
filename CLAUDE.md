@@ -1,9 +1,9 @@
-# Insides
+# Prune Watch
 
 ## Design context
 
 Canonical design record lives at `CONTEXT.md` in this directory — a symlink
-into the Obsidian vault at `/root/Dev/vault/Main/Projects/Claude Ideas/List/Insides.md`.
+into the Obsidian vault at `/root/Dev/vault/Main/Projects/Claude Ideas/List/Prune Watch.md`.
 
 **Read it first.** It's the "why" layer: motivation, explored alternatives,
 handoff brief, evolving decisions. Edits here propagate back to the vault
@@ -11,7 +11,7 @@ automatically (same file on disk).
 
 The symlink is local to `claude-nest` (not committed). If you need the
 context on another machine, read the note in the vault repo directly:
-<https://github.com/neelts/vault/blob/main/Main/Projects/Claude%20Ideas/List/Insides.md>
+<https://github.com/neelts/vault/blob/main/Main/Projects/Claude%20Ideas/List/Prune%20Watch.md>
 
 ## Working notes
 
