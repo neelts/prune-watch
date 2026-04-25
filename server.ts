@@ -23,6 +23,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import {
   readdirSync,
+  readFileSync,
+  readlinkSync,
   statSync,
   existsSync,
   mkdirSync,
@@ -56,7 +58,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.0' },
+  { name: 'prune-watch', version: '0.2.1' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -115,18 +117,28 @@ await mcp.connect(new StdioServerTransport())
 
 // --- Transcript discovery & watching ---------------------------------------
 //
-// Claude Code does not pass us the active session id or transcript path.
-// We discover by scanning ~/.claude/projects for the JSONL whose mtime
-// crosses our startup time. Whichever appears first is "ours" — it's the
-// session that just typed something while we were the only new server.
-// Multiple concurrent sessions confuse this; that's a known limitation.
+// Claude Code does not pass us the session id or transcript path directly,
+// but the channel server is spawned as a descendant of the claude process,
+// which has `--resume <id>` or `--session-id <id>` in its argv. We walk
+// /proc up the parent chain to find it. CWD comes from /proc/<pid>/cwd.
+//
+// With both pinned, the transcript path is deterministic; no mtime races.
+// Falls through to narrower-to-wider heuristics when /proc is unavailable
+// (non-Linux) or the parent claude was started without an explicit id.
+
+const owner = findOwningSession()
+log(
+  owner.pid
+    ? `owner: pid=${owner.pid} sessionId=${owner.sessionId?.slice(0, 8) ?? 'unknown'} cwd=${owner.cwd ?? 'unknown'}`
+    : `owner: claude ancestor not found in /proc; falling back to blind mtime scan`,
+)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollAttempts = 0
 
 pollTimer = setInterval(() => {
   pollAttempts++
-  const found = discoverTranscript()
+  const found = discoverTranscript(owner)
   if (found) {
     transcriptPath = found
     if (pollTimer) clearInterval(pollTimer)
@@ -134,7 +146,9 @@ pollTimer = setInterval(() => {
     startWatching(found)
     persistState()
     runCheck({ force: false }).catch((e) => log(`initial check failed: ${e}`))
-  } else if (pollAttempts > DISCOVERY_TIMEOUT_S) {
+  } else if (!owner.sessionId && pollAttempts > DISCOVERY_TIMEOUT_S) {
+    // Only time out in the blind-scan path. If we know the session id,
+    // poll forever — the file will appear when the user types.
     if (pollTimer) clearInterval(pollTimer)
     log(
       `no transcript found in ${DISCOVERY_TIMEOUT_S}s; nudges disabled until restart`,
@@ -143,36 +157,150 @@ pollTimer = setInterval(() => {
   }
 }, 1000)
 
-function discoverTranscript(): string | null {
+type Owner = { pid: number | null; sessionId: string | null; cwd: string | null }
+
+function findOwningSession(): Owner {
+  // /proc is Linux-only. On macOS/Windows we'll fall back to the blind scan.
+  if (process.platform !== 'linux') return { pid: null, sessionId: null, cwd: null }
+  let pid = process.pid
+  for (let i = 0; i < 8; i++) {
+    let ppid: number | null = null
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8')
+      const m = status.match(/^PPid:\s+(\d+)/m)
+      if (m) ppid = parseInt(m[1], 10)
+    } catch {
+      return { pid: null, sessionId: null, cwd: null }
+    }
+    if (!ppid || ppid <= 1) return { pid: null, sessionId: null, cwd: null }
+    pid = ppid
+
+    let cmdline: string
+    try {
+      cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+    } catch {
+      continue
+    }
+    const argv = cmdline.split('\0').filter(Boolean)
+    if (argv.length === 0) continue
+    // Recognise claude by argv[0] basename.
+    const exe = argv[0].split('/').pop() ?? ''
+    if (exe !== 'claude' && !exe.startsWith('claude ')) continue
+
+    // Extract session id from --resume <id> or --session-id <id>.
+    let sessionId: string | null = null
+    for (const flag of ['--resume', '--session-id']) {
+      const idx = argv.indexOf(flag)
+      if (idx > -1 && argv[idx + 1]) {
+        sessionId = argv[idx + 1]
+        break
+      }
+    }
+
+    // Cwd from /proc symlink. Same uid required, which is true for our
+    // own ancestor chain.
+    let cwd: string | null = null
+    try {
+      cwd = readlinkSync(`/proc/${pid}/cwd`)
+    } catch {}
+
+    return { pid, sessionId, cwd }
+  }
+  return { pid: null, sessionId: null, cwd: null }
+}
+
+function encodeProjectDir(cwd: string): string {
+  // Claude Code encodes cwd by replacing `/` with `-` (leading slash → leading dash).
+  return cwd.replace(/\//g, '-')
+}
+
+function discoverTranscript(o: Owner): string | null {
   if (!existsSync(PROJECTS_DIR)) return null
-  let best: { path: string; mtime: number } | null = null
+  const projectDir = o.cwd ? encodeProjectDir(o.cwd) : null
+
+  // Case A: known session id + project dir → exact path.
+  if (o.sessionId && projectDir) {
+    const exact = join(PROJECTS_DIR, projectDir, `${o.sessionId}.jsonl`)
+    return existsSync(exact) ? exact : null
+  }
+
+  // Case B: known session id only → search by filename across project dirs.
+  if (o.sessionId) {
+    let projectDirs: string[]
+    try {
+      projectDirs = readdirSync(PROJECTS_DIR)
+    } catch {
+      return null
+    }
+    for (const proj of projectDirs) {
+      const p = join(PROJECTS_DIR, proj, `${o.sessionId}.jsonl`)
+      if (existsSync(p)) return p
+    }
+    return null
+  }
+
+  // Case C: known project dir only → newest jsonl in it (mtime-guarded).
+  if (projectDir) {
+    return newestJsonlIn(join(PROJECTS_DIR, projectDir))
+  }
+
+  // Case D: blind scan (last resort). Filter /tmp leftovers and require
+  // mtime ≥ SERVER_START - 5s slack so a stale file mid-touch doesn't latch.
   let projectDirs: string[]
   try {
     projectDirs = readdirSync(PROJECTS_DIR)
   } catch {
     return null
   }
+  let best: { path: string; mtime: number } | null = null
+  const minMtime = SERVER_START_MS - 5_000
   for (const proj of projectDirs) {
-    const dir = join(PROJECTS_DIR, proj)
+    if (proj === '-tmp' || proj.startsWith('-tmp-')) continue
     let entries: string[]
     try {
-      entries = readdirSync(dir)
+      entries = readdirSync(join(PROJECTS_DIR, proj))
     } catch {
       continue
     }
     for (const f of entries) {
       if (!f.endsWith('.jsonl')) continue
-      const p = join(dir, f)
+      const p = join(PROJECTS_DIR, proj, f)
       let st
       try {
         st = statSync(p)
       } catch {
         continue
       }
-      if (st.mtimeMs < SERVER_START_MS) continue
+      if (st.mtimeMs < minMtime) continue
       if (!best || st.mtimeMs > best.mtime) {
         best = { path: p, mtime: st.mtimeMs }
       }
+    }
+  }
+  return best?.path ?? null
+}
+
+function newestJsonlIn(dir: string): string | null {
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return null
+  }
+  let best: { path: string; mtime: number } | null = null
+  const minMtime = SERVER_START_MS - 5_000
+  for (const f of entries) {
+    if (!f.endsWith('.jsonl')) continue
+    const p = join(dir, f)
+    let st
+    try {
+      st = statSync(p)
+    } catch {
+      continue
+    }
+    if (st.mtimeMs < minMtime) continue
+    if (!best || st.mtimeMs > best.mtime) {
+      best = { path: p, mtime: st.mtimeMs }
     }
   }
   return best?.path ?? null
