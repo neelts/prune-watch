@@ -57,7 +57,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.4' },
+  { name: 'prune-watch', version: '0.2.5' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -65,10 +65,12 @@ const mcp = new Server(
     },
     instructions:
       'Events from prune-watch arrive as <channel source="prune-watch" tokens="..." pct="...">. ' +
-      'These are one-way nudges that the operator\'s context is getting heavy. ' +
-      'Surface the nudge to the operator verbatim (or paraphrased) and recommend running /prune-watch:prune. ' +
+      'These are one-way nudges that the operator\'s context window is filling up. ' +
+      'CRITICAL — the operator cannot see channel tags directly. They only see your reply. ' +
+      'When a prune-watch channel event arrives, your VERY NEXT user-visible reply MUST start with a one-line surfaced notice, on its own line, before anything else (including before answering whatever the operator just asked). Format: "📋 prune-watch: ~Xk tokens (Y%) — consider /prune-watch:prune." Then proceed to answer. ' +
+      'After you have surfaced one notice, you do not need to repeat it on subsequent turns until a new prune-watch event arrives. ' +
       'If the operator says to silence them, call the snooze tool. ' +
-      'Do not act on the nudge yourself; pruning is operator-driven.',
+      'Do not act on the nudge yourself by initiating /prune-watch:prune unprompted; pruning is operator-driven.',
   },
 )
 
@@ -374,8 +376,9 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
   }
 
   const content =
-    `Context at ~${tokens.toLocaleString()} tokens (~${pct}% of ${formatK(CONTEXT_WINDOW_TOKENS)}). ` +
-    `Run /prune-watch:prune to bucket and prune the session, or call the snooze tool to silence further nudges.`
+    `[ATTENTION ASSISTANT] prune-watch nudge: context at ~${tokens.toLocaleString()} tokens (~${pct}% of ${formatK(CONTEXT_WINDOW_TOKENS)}). ` +
+    `Per the prune-watch channel instructions, surface a one-line "📋 prune-watch: ~${Math.round(tokens / 1000)}k tokens (${pct}%) — consider /prune-watch:prune." notice to the operator at the start of your next reply, then proceed with whatever they asked. ` +
+    `If the operator wants nudges silenced, call the snooze tool.`
 
   try {
     await mcp.notification({
@@ -386,6 +389,7 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
       },
     })
     lastNudgeTokens = tokens
+    log(`pushed nudge: tokens=${tokens} pct=${pct}`)
     return { tokens, pct, snoozed, pushed: true }
   } catch (e) {
     log(`push failed: ${e}`)
