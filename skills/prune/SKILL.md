@@ -1,9 +1,9 @@
 ---
 name: prune
-description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and build a seed brief so the operator can /clear without losing what matters. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly".
+description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and build a seed brief so the operator can /clear without losing what matters. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
 disable-model-invocation: true
 argument-hint: [aggressive|conservative|keyword]
-allowed-tools: Bash(ls *) Bash(wc *) Bash(stat *) Bash(test *) Read
+allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read
 ---
 
 # /prune — operator-guided context prune
@@ -14,13 +14,16 @@ Session info (expanded before you see this):
 
 - **Session ID**: `${CLAUDE_SESSION_ID}`
 - **Transcript path (resolved)**: !`echo "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl"`
-- **Transcript size**: !`ls -lh "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null | awk '{print $5, "bytes,", $6, $7, $8}' || echo "MISSING — transcript not found at expected path"`
-- **Transcript line count**: !`wc -l "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null | awk '{print $1}' || echo "n/a"`
+- **Transcript size**: !`stat -c '%s bytes, modified %y' "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null | sed 's/\.[0-9]* +/ +/' || echo "MISSING — transcript not found at expected path"`
+- **Transcript line count**: !`wc -l < "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null || echo "n/a"`
+- **Channel status**: !`bash ${CLAUDE_SKILL_DIR}/banner.sh`
 - **Operator hint**: `$ARGUMENTS`
 
 ## Step 1 — Sanity check
 
 If the transcript path above says `MISSING`, stop and tell the operator: "Can't find the transcript at the expected path. Check `~/.claude/projects/` for the right session file." Do not proceed.
+
+If **Channel status** says `NOT ENABLED`, surface a one-line note to the operator BEFORE proceeding with the prune — something like *"Heads-up: prune-watch channel isn't enabled in this session, so you won't get proactive nudges going forward. Pruning will still work right now."* Then continue with the prune. Don't block on it; it's informational.
 
 Otherwise continue.
 
