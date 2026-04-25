@@ -20,7 +20,7 @@ The operator just ran `/prune-watch:setup`. Render the diagnostic below verbatim
   - `unsnooze` — re-arm
 - **Channel server** — background process that watches the session transcript on disk and pushes a one-way nudge into the session when context crosses ~200k tokens. **Requires `--channels` to actually deliver nudges** (see below).
 
-!`bash ${CLAUDE_SKILL_DIR}/diagnose.sh`
+!`bash ${CLAUDE_SKILL_DIR}/diagnose.sh ${CLAUDE_SESSION_ID}`
 
 ---
 

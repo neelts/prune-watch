@@ -2,8 +2,16 @@
 # Emits the diagnostic block for /prune-watch:setup.
 # Lives outside SKILL.md so awk/sed/cut field references like $2 don't get
 # mangled by Claude Code's `$ARGUMENTS[N]` substitution.
+#
+# Argument: $1 = current session id (passed via ${CLAUDE_SESSION_ID} from skill).
 
-STATE="$HOME/.claude/channels/prune-watch/state.json"
+SID="$1"
+STATE_DIR="$HOME/.claude/channels/prune-watch"
+if [ -n "$SID" ]; then
+  STATE="$STATE_DIR/state-$SID.json"
+else
+  STATE="$STATE_DIR/state-unknown.json"
+fi
 
 echo "## Plugin process status"
 echo

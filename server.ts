@@ -35,7 +35,6 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const STATE_DIR = join(homedir(), '.claude', 'channels', 'prune-watch')
-const STATE_FILE = join(STATE_DIR, 'state.json')
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects')
 
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
@@ -58,7 +57,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.3' },
+  { name: 'prune-watch', version: '0.2.4' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -138,6 +137,15 @@ log(
   owner.pid
     ? `owner: pid=${owner.pid} sessionId=${owner.sessionId?.slice(0, 8) ?? 'unknown'} cwd=${owner.cwd ?? 'unknown'}`
     : `owner: claude ancestor not found in /proc; falling back to blind mtime scan`,
+)
+
+// Namespace state by session id so concurrent sessions of the same user don't
+// last-writer-wins-overwrite each other's scratch file. When session id can't
+// be determined (Case C/D fallbacks), fall back to a sentinel filename — those
+// degraded paths still collide, accepted limitation.
+const STATE_FILE = join(
+  STATE_DIR,
+  owner.sessionId ? `state-${owner.sessionId}.json` : 'state-unknown.json',
 )
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
