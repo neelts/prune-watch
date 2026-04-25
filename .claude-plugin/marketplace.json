@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "prune-watch",
+  "id": "prune-watch",
+  "owner": {
+    "name": "neelts"
+  },
+  "metadata": {
+    "description": "Single-plugin marketplace hosting prune-watch.",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "prune-watch",
+      "source": "./",
+      "description": "Golden-ratio context prune between /clear and /compact. Operator-guided bucketing before context rot.",
+      "version": "0.2.0",
+      "author": { "name": "neelts" },
+      "homepage": "https://github.com/neelts/prune-watch",
+      "category": "workflow",
+      "keywords": ["context", "prune", "compact", "channel", "session-management"]
+    }
+  ]
+}
