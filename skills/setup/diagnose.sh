@@ -55,5 +55,5 @@ done
 if [ "$ENABLED" = "yes" ]; then
   echo "**ENABLED** — proactive nudges from prune-watch will surface in this session when context crosses the threshold."
 else
-  echo "**NOT ENABLED** — the channel server is running, but Claude Code is dropping its notifications because \`--channels\` was not passed at launch. Pruning still works on demand via \`/prune-watch:prune\`."
+  echo "**NOT ENABLED** — the channel server is running, but Claude Code is dropping its notifications because \`--dangerously-load-development-channels plugin:prune-watch@prune-watch\` was not passed at launch. (Pruning still works on demand via \`/prune-watch:prune\`.)"
 fi

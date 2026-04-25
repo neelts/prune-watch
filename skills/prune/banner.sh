@@ -21,5 +21,5 @@ done
 if [ "$ENABLED" = "yes" ]; then
   echo "ENABLED — proactive nudges will fire when context crosses threshold"
 else
-  echo "NOT ENABLED — pruning works on demand, but you will not get proactive nudges. Run /prune-watch:setup for setup instructions."
+  echo "NOT ENABLED — pruning works on demand, but you will not get proactive nudges. Add '--dangerously-load-development-channels plugin:prune-watch@prune-watch' to your claude launch (NOT --channels — that requires allowlist membership). Run /prune-watch:setup for guided setup."
 fi

@@ -34,17 +34,16 @@ Tell the operator briefly: "You're fully set up. Run `/prune-watch:prune` whenev
 
 ### If status is NOT ENABLED
 
-Tell the operator that to turn on proactive nudges, the claude binary needs two extra flags at launch:
+Tell the operator that to turn on proactive nudges, the claude binary needs one extra flag at launch (until prune-watch is on the official Anthropic channel allowlist):
 
 ```
-claude --channels plugin:prune-watch@prune-watch \
-       --dangerously-load-development-channels plugin:prune-watch@prune-watch \
+claude --dangerously-load-development-channels plugin:prune-watch@prune-watch \
        [their existing flags]
 ```
 
-The `--dangerously-load-development-channels` flag is required only because prune-watch isn't on the official Anthropic channel allowlist yet — it can be dropped once approved.
+Important: do NOT also pass `--channels plugin:prune-watch@prune-watch`. The two are alternatives, not complements — passing both causes Claude Code to skip notifications because the production-allowlist path fails for unapproved plugins. Once prune-watch is approved, swap the dev flag for the plain `--channels` flag.
 
-Then explain the two common ways to add those flags:
+Then explain the two common ways to add the flag:
 
 1. **Persistent (recommended)** — edit the launcher script that starts their claude session. Where this lives depends on their setup (e.g. tmux/systemd/login script). The flags need to go on the actual `claude …` invocation, before `--resume`/`--session-id` if those are present. After editing, fully restart the session (kill the parent claude process and let the supervisor respawn it, or close and reopen the terminal).
 2. **One-off** — close this session and start a new one with the flags appended manually. Faster to test but doesn't persist.
