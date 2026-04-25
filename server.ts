@@ -58,7 +58,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.1' },
+  { name: 'prune-watch', version: '0.2.2' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -114,6 +114,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 })
 
 await mcp.connect(new StdioServerTransport())
+
+// MCP SDK's stdio transport doesn't propagate stdin EOF to process exit.
+// When parent claude dies the pipe closes, but the watch() handle and other
+// timers keep bun alive — the server then sticks around as a PPID 1 orphan.
+// Exit explicitly on either signal.
+process.stdin.on('end', () => process.exit(0))
+process.stdin.on('close', () => process.exit(0))
 
 // --- Transcript discovery & watching ---------------------------------------
 //
