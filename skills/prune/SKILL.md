@@ -1,9 +1,9 @@
 ---
 name: prune
-description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and build a seed brief so the operator can /clear without losing what matters. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
+description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to .prune-handover.md in the project root so the operator can /clear and re-inject it via @.prune-handover.md without losing what matters. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
 disable-model-invocation: true
 argument-hint: [aggressive|conservative|keyword]
-allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read
+allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write
 ---
 
 # /prune — operator-guided context prune
@@ -126,22 +126,32 @@ Previous session distilled the following context. Treat this as your working mem
 ## Other kept context
 
 <anything else that was kept>
+
+---
+
+<!-- prune-watch cleanup footer — keep verbatim -->
+**Cleanup:** This brief is single-use scratch from `/prune-watch:prune`. After absorbing the context above, delete this file: `rm .prune-handover.md`. Don't reference it in your reply.
 ````
 
-Skip sections that have no kept buckets. Do not pad. Do not invent content — only use what the bucketer returned.
+Skip sections that have no kept buckets. Do not pad. Do not invent content — only use what the bucketer returned. Include the cleanup footer verbatim — it tells the post-`/clear` Claude to remove the file after reading it.
 
 ## Step 6 — Hand off
 
-Print the seed brief inside a fenced code block so the operator can copy it verbatim, then give them the two-step instruction:
+**Save the seed brief to disk** at `.prune-handover.md` in the operator's project root (use the `Write` tool, path = `.prune-handover.md` relative to the current working directory). This file is the carryover artefact — the operator will inject it into the fresh post-`/clear` session via Claude Code's `@` file-mention picker, so they don't have to copy from the terminal.
 
-> Prune ready. To apply:
+Overwrite the file each run; it's always "the latest handover", never an archive.
+
+Then print a short hand-off message — NOT the full brief, just the path and instructions. Don't render the brief inline; the file IS the deliverable. Format:
+
+> Prune ready. Brief saved to `.prune-handover.md` (N kept buckets, ~Xk tokens).
 >
+> To apply:
 > 1. Run `/clear` to reset the session.
-> 2. Paste the brief above as your first message.
+> 2. Type `@.prune-handover.md` as your first message — the picker will autocomplete it. Claude Code injects the brief content as your starting context.
 >
-> The new session will start with exactly the context you kept and nothing else.
+> One-time: add `.prune-handover.md` to your project's `.gitignore` so handovers never end up in commits.
 
-Do **not** run `/clear` yourself — it's a user command and applying it would discard the brief before the operator sees it. Leave the operator in control.
+Do **not** run `/clear` yourself — it's a user command and applying it would happen before the operator's seen the hand-off message. Leave the operator in control.
 
 ## Notes for you
 
