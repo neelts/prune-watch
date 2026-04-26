@@ -44,6 +44,7 @@ const THRESHOLD_TOKENS = intEnv('PRUNE_WATCH_THRESHOLD_TOKENS', 200_000)
 const CONTEXT_WINDOW_TOKENS = intEnv('PRUNE_WATCH_CONTEXT_WINDOW', 1_000_000)
 const BYTES_PER_TOKEN = intEnv('PRUNE_WATCH_BYTES_PER_TOKEN', 4)
 const DEBOUNCE_MS = intEnv('PRUNE_WATCH_DEBOUNCE_MS', 30_000)
+const MIN_PUSH_INTERVAL_MS = intEnv('PRUNE_WATCH_MIN_PUSH_INTERVAL_MS', 600_000)
 const DISCOVERY_TIMEOUT_S = intEnv('PRUNE_WATCH_DISCOVERY_TIMEOUT_S', 600)
 
 const SERVER_START_MS = Date.now()
@@ -51,12 +52,13 @@ const SERVER_START_MS = Date.now()
 // In-memory session state (lifecycle is the session — process exit on /quit)
 let snoozed = false
 let lastNudgeTokens = 0
+let lastPushMs = 0
 let transcriptPath: string | null = null
 
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.7' },
+  { name: 'prune-watch', version: '0.2.8' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -370,11 +372,21 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
   if (tokens < THRESHOLD_TOKENS && !force) {
     return { tokens, pct, snoozed, pushed: false, reason: 'below threshold' }
   }
-  // No token-delta cooldown: empirically, channel events queued during operator
-  // idle time get consumed/expired before they're seen, so a single push at
-  // server start is unreliable. Re-push on every debounced fs.watch event so a
-  // fresh <channel> tag is always in the queue when the operator returns.
-  // The 30s debounce already prevents excessive firing during active typing.
+  // Time-based cooldown so pushes don't feedback-loop. Each surfaced nudge is
+  // itself a transcript write, which triggers fs.watch, which would re-push.
+  // Without this gate the model surfaces the nudge on every single reply.
+  // 10 min default leaves plenty of room for one nudge to land + the operator
+  // to either /prune-watch:prune, snooze, or ignore for a while.
+  const sinceLastPush = Date.now() - lastPushMs
+  if (!force && lastPushMs > 0 && sinceLastPush < MIN_PUSH_INTERVAL_MS) {
+    return {
+      tokens,
+      pct,
+      snoozed,
+      pushed: false,
+      reason: `cooldown (${Math.round((MIN_PUSH_INTERVAL_MS - sinceLastPush) / 1000)}s remaining)`,
+    }
+  }
 
   const content =
     `[ATTENTION ASSISTANT] prune-watch nudge: context at ~${tokens.toLocaleString()} tokens (~${pct}% of ${formatK(CONTEXT_WINDOW_TOKENS)}). ` +
@@ -390,6 +402,7 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
       },
     })
     lastNudgeTokens = tokens
+    lastPushMs = Date.now()
     log(`pushed nudge: tokens=${tokens} pct=${pct}`)
     return { tokens, pct, snoozed, pushed: true }
   } catch (e) {
