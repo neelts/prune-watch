@@ -30,7 +30,14 @@ Otherwise continue.
 
 ## Step 2 — Delegate to the bucketer
 
-Spawn the `transcript-bucketer` subagent via the Agent tool. Pass it:
+First, find any CLAUDE.md files the bucketer should use as the documented baseline. Check these in order; include each one that exists:
+
+- `<cwd>/CLAUDE.md` (project root)
+- `<cwd>/.claude/CLAUDE.md` (project-local override)
+
+Use a quick `test -f` to check existence; pass only the readable ones. Don't recursively walk the project — the project-root CLAUDE.md is the canonical source; nested ones are for subprojects and aren't worth the bucketer's read budget here.
+
+Then spawn the `transcript-bucketer` subagent via the Agent tool. Pass it:
 
 - **subagent_type**: `transcript-bucketer`
 - **description**: `Bucket session transcript`
@@ -40,6 +47,8 @@ Spawn the `transcript-bucketer` subagent via the Agent tool. Pass it:
   Read and bucket this Claude Code session transcript:
 
   Transcript path: <resolved path from above>
+
+  claude_md_paths: <newline-separated list of CLAUDE.md absolute paths you confirmed exist; empty if none>
 
   Operator hint (may be empty): <$ARGUMENTS>
 
@@ -55,9 +64,11 @@ The subagent returns a JSON object of shape:
 ```json
 {
   "transcript_tokens_estimate": <int>,
+  "claude_md_read": ["..."],
   "buckets": [
     {"id": 1, "title": "...", "bucket_type": "...", "importance": "high|medium|low",
-     "tokens": <int>, "keep_default": true|false, "summary": "...", "key_facts": ["..."]}
+     "novelty": "new|documented", "tokens": <int>, "keep_default": true|false,
+     "summary": "...", "key_facts": ["..."]}
   ]
 }
 ```
@@ -68,16 +79,21 @@ Otherwise render a compact ranked list. Format:
 
 ```
 Prune proposal — ctx ~<total>k tokens, <N> buckets
+CLAUDE.md cross-checked: <list claude_md_read paths, or "none — no docs baseline used">
 
-  [x] 1. HIGH  decisions      — auth middleware refactor (42k)
+  [x] 1. NEW HIGH  decisions      — auth middleware refactor (42k)
          chose express-session over JWT after legal/compliance review
-  [x] 2. HIGH  files-touched  — server/auth/* (28k)
-         middleware, store, login route
-  [ ] 3. LOW   tool-exhaust   — grep output 1200-1400 (18k)
+  [x] 2. NEW HIGH  open-threads   — pending Redis migration (12k)
+         decided in conversation, not yet in CLAUDE.md
+  [ ] 3. DOC HIGH  files-touched  — server/auth/* (28k)
+         middleware/store/login — already covered in CLAUDE.md
+  [ ] 4. DOC LOW   tool-exhaust   — grep output 1200-1400 (18k)
          bulk search results, no longer referenced
   ...
 
 [x] = kept by default, [ ] = dropped by default
+NEW = not in CLAUDE.md (load-bearing, you'll lose it on /clear)
+DOC = covered in CLAUDE.md (safe to drop, post-/clear session re-reads it)
 
 Reply with:
   keep 1,3,5          → keep these (override all defaults)
@@ -86,7 +102,7 @@ Reply with:
   cancel              → abort, change nothing
 ```
 
-Use checkboxes based on `keep_default`. Keep the summary line to one line per bucket (truncate if needed). Colour/markdown is fine if the terminal renders it; ASCII is the fallback.
+Use checkboxes based on `keep_default`. Always render `NEW` / `DOC` before the importance label so the load-bearing axis is the most scannable column. Keep the summary line to one line per bucket (truncate if needed). If `claude_md_read` is empty, replace the cross-checked line with a one-line note: "No CLAUDE.md found — novelty is best-effort guesswork."
 
 ## Step 4 — Await operator reply
 
@@ -135,6 +151,8 @@ Previous session distilled the following context. Treat this as your working mem
 ````
 
 Skip sections that have no kept buckets. Do not pad. Do not invent content — only use what the bucketer returned.
+
+Within each section, list `novelty: new` buckets before `novelty: documented` ones — `new` buckets are why the brief exists at all; `documented` ones are the operator-overridden "keep this even though CLAUDE.md covers it" cases.
 
 The cleanup footer is required — substitute `<HANDOVER-PATH>` with the actual **Handover file path** value shown at the top of this skill (e.g. `.prune-handover-1f71f5fb.md`). The post-`/clear` Claude reads the file via `@…` and the footer tells it to remove the file once absorbed.
 

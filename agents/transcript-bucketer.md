@@ -12,7 +12,9 @@ You operate in a fresh context. You do not have access to the caller's conversat
 
 ## Input
 
-The caller passes you a transcript path (absolute, JSONL). The file is a newline-delimited sequence of Claude Code session events — user messages, assistant messages, tool uses, tool results.
+The caller passes you:
+- a transcript path (absolute, JSONL) — newline-delimited Claude Code session events
+- a `claude_md_paths` list (zero or more) — paths to project CLAUDE.md files. **Read these.** They tell you what's already documented in the project; you'll use this to score each bucket's novelty (see below).
 
 If the caller also passes a hint string, honour it:
 
@@ -46,7 +48,27 @@ For each bucket, set `importance`:
 - `medium` — useful context but reconstructible or summarisable
 - `low` — safely droppable
 
-Set `keep_default` from importance: `high` → `true`, `medium` → `true`, `low` → `false`. Adjust by hint (see above).
+### Novelty (the load-bearing axis)
+
+For each bucket, set `novelty` by comparing its content against the CLAUDE.md files you read:
+
+- `new` — decision, fact, or open thread that does **not** appear in any CLAUDE.md (or appears only in passing without the specifics from this conversation). The post-`/clear` session will lose this if you don't keep the bucket — it's the load-bearing IP of pruning.
+- `documented` — covered well enough in CLAUDE.md that the next session can re-derive equivalent context by reading CLAUDE.md alone. Safely droppable even if `importance` is `medium` or `high`.
+
+Use this rule of thumb: if the next Claude session, starting fresh and reading CLAUDE.md, would NOT learn what's in this bucket, mark it `new`. If reading CLAUDE.md would give roughly the same picture, mark it `documented`.
+
+`tool-exhaust` and `tangent` buckets are almost always `documented` (or irrelevant — drop either way). `decisions` and `open-threads` are the most likely `new` candidates.
+
+### Setting keep_default
+
+Combine `importance` and `novelty`:
+
+| novelty / importance | high | medium | low |
+| --- | --- | --- | --- |
+| `new` | `true` | `true` | `false` |
+| `documented` | `false` | `false` | `false` |
+
+Then adjust by hint (`aggressive` → flip more to `false`, `conservative` → flip more to `true`).
 
 ### Token estimate
 
@@ -65,12 +87,14 @@ Return **only** a JSON object. No prose before or after. No markdown fences. Exa
 ```json
 {
   "transcript_tokens_estimate": 312000,
+  "claude_md_read": ["/root/Dev/foo/CLAUDE.md"],
   "buckets": [
     {
       "id": 1,
       "title": "auth middleware refactor — chose express-session",
       "bucket_type": "decisions",
       "importance": "high",
+      "novelty": "new",
       "tokens": 42000,
       "keep_default": true,
       "summary": "Evaluated JWT vs express-session. Chose express-session after legal flagged token-storage compliance concerns. Middleware at server/auth/middleware.ts.",
@@ -87,24 +111,28 @@ Return **only** a JSON object. No prose before or after. No markdown fences. Exa
 Fields — all required, no extras:
 
 - `transcript_tokens_estimate` — total rough token count for the whole transcript
+- `claude_md_read` — list of CLAUDE.md paths you actually read (echo back the input list, minus any you couldn't read). Empty list `[]` if none provided or none readable.
 - `buckets[].id` — 1-indexed, contiguous
 - `buckets[].title` — under 80 chars, scannable
 - `buckets[].bucket_type` — one of the tags above
 - `buckets[].importance` — `high` | `medium` | `low`
+- `buckets[].novelty` — `new` | `documented` (see Novelty above)
 - `buckets[].tokens` — integer estimate
-- `buckets[].keep_default` — boolean
+- `buckets[].keep_default` — boolean (combines importance × novelty per the table)
 - `buckets[].summary` — 1–3 sentences, dense
 - `buckets[].key_facts` — array of 1–5 short strings
 
-Order buckets by `importance` (high first), then by position in the transcript (earliest first).
+Order buckets by `novelty` (`new` first), then `importance` (high first), then by position in the transcript (earliest first). This puts the load-bearing buckets at the top.
 
 ## Process
 
-1. `Read` the transcript path the caller gave you. If the file is larger than your single-read budget, use `Bash` (`wc -l`, `head`, `tail`, `sed -n '1000,2000p'`) to inspect in chunks.
-2. Skim the whole thing before ranking — early messages often set the task and hold the highest-value context; late messages often hold noise.
-3. Group into buckets. A good bucket is about one thing. If two ideas are tangled, split them.
-4. Rank, estimate, fill in `key_facts`.
-5. Emit the JSON.
+1. `Read` each `claude_md_paths` entry. These give you the project's documented baseline. Note what's covered: which files, which decisions, which conventions.
+2. `Read` the transcript path the caller gave you. If the file is larger than your single-read budget, use `Bash` (`wc -l`, `head`, `tail`, `sed -n '1000,2000p'`) to inspect in chunks.
+3. Skim the whole thing before ranking — early messages often set the task and hold the highest-value context; late messages often hold noise.
+4. Group into buckets. A good bucket is about one thing. If two ideas are tangled, split them.
+5. For each bucket, score `importance` and `novelty` (compare against what CLAUDE.md already covers). Set `keep_default` per the table.
+6. Estimate tokens, fill in `key_facts` (focus on the things the next session would lose if it only had CLAUDE.md and the code).
+7. Emit the JSON.
 
 ## What not to do
 
