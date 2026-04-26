@@ -61,7 +61,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.14' },
+  { name: 'prune-watch', version: '0.2.15' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -146,13 +146,16 @@ log(
 )
 
 // Namespace state by session id so concurrent sessions of the same user don't
-// last-writer-wins-overwrite each other's scratch file. When session id can't
-// be determined (Case C/D fallbacks), fall back to a sentinel filename — those
-// degraded paths still collide, accepted limitation.
-const STATE_FILE = join(
-  STATE_DIR,
-  owner.sessionId ? `state-${owner.sessionId}.json` : 'state-unknown.json',
-)
+// last-writer-wins-overwrite each other's scratch file. If the /proc walk
+// couldn't determine a session id, write nothing — a stale state-unknown.json
+// from a one-off /tmp test pollutes diagnostics later when a real session
+// reads it expecting current data.
+const STATE_FILE: string | null = owner.sessionId
+  ? join(STATE_DIR, `state-${owner.sessionId}.json`)
+  : null
+if (!STATE_FILE) {
+  log('no session id discovered; state file will not be written this run')
+}
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollAttempts = 0
@@ -538,6 +541,7 @@ function text(t: string) {
 }
 
 function persistState(extra: Record<string, unknown> = {}) {
+  if (!STATE_FILE) return // no session id → no state file (avoid misleading state-unknown.json)
   try {
     writeFileSync(
       STATE_FILE,
