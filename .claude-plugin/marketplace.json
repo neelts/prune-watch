@@ -7,14 +7,14 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace hosting prune-watch.",
-    "version": "0.2.8"
+    "version": "0.2.9"
   },
   "plugins": [
     {
       "name": "prune-watch",
       "source": "./",
       "description": "Golden-ratio context prune between /clear and /compact. Operator-guided bucketing before context rot.",
-      "version": "0.2.8",
+      "version": "0.2.9",
       "author": { "name": "neelts" },
       "homepage": "https://github.com/neelts/prune-watch",
       "category": "workflow",

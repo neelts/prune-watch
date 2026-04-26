@@ -30,6 +30,9 @@ import {
   mkdirSync,
   writeFileSync,
   watch,
+  openSync,
+  readSync,
+  closeSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -58,7 +61,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.8' },
+  { name: 'prune-watch', version: '0.2.9' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -361,7 +364,12 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
   } catch {
     return { tokens: 0, pct: 0, snoozed, pushed: false, reason: 'transcript missing' }
   }
-  const tokens = Math.round(st.size / BYTES_PER_TOKEN)
+  // Prefer the real input-token count from the most recent assistant message's
+  // usage block. Falls back to bytes/4 only if no usage block can be found
+  // (very early in a session, or non-standard transcript).
+  const tokens =
+    estimateTokensFromUsage(transcriptPath) ??
+    Math.round(st.size / BYTES_PER_TOKEN)
   const pct = Math.round((tokens / CONTEXT_WINDOW_TOKENS) * 100)
 
   persistState({ tokens, pct, status: 'watching' })
@@ -412,6 +420,57 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
 }
 
 // --- Helpers ---------------------------------------------------------------
+
+// Read the tail of the JSONL and find the most recent assistant message's
+// usage block. Sum input_tokens + cache_creation_input_tokens +
+// cache_read_input_tokens — that's what Claude actually paid for on the
+// last turn, and is what the model sees as "context size". Much more accurate
+// than bytes/4, which counts all the JSONL metadata that never reaches the model.
+function estimateTokensFromUsage(path: string): number | null {
+  let st
+  try {
+    st = statSync(path)
+  } catch {
+    return null
+  }
+  // 256KB tail is plenty to find the most recent assistant usage block even in
+  // very large transcripts; one entry is typically a few KB.
+  const TAIL_BYTES = 256 * 1024
+  const offset = Math.max(0, st.size - TAIL_BYTES)
+  const length = st.size - offset
+  if (length === 0) return null
+  let buf: Buffer
+  try {
+    const fd = openSync(path, 'r')
+    buf = Buffer.alloc(length)
+    readSync(fd, buf, 0, length, offset)
+    closeSync(fd)
+  } catch {
+    return null
+  }
+  const tail = buf.toString('utf8')
+  const lines = tail.split('\n')
+  // Skip the first line if we sliced mid-record.
+  const startIdx = offset > 0 ? 1 : 0
+  for (let i = lines.length - 1; i >= startIdx; i--) {
+    const line = lines[i]
+    if (!line.includes('"role":"assistant"')) continue
+    if (!line.includes('"usage"')) continue
+    let obj: any
+    try {
+      obj = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const usage = obj?.message?.usage
+    if (!usage) continue
+    const input = usage.input_tokens ?? 0
+    const cacheCreation = usage.cache_creation_input_tokens ?? 0
+    const cacheRead = usage.cache_read_input_tokens ?? 0
+    return input + cacheCreation + cacheRead
+  }
+  return null
+}
 
 function intEnv(name: string, fallback: number): number {
   const v = process.env[name]
