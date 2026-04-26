@@ -1,6 +1,6 @@
 ---
 name: prune
-description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to .prune-handover-<sid>.md in the project root so the operator can /clear and re-inject it via @.prune-handover-<sid>.md without losing what matters. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
+description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to /tmp/prune-handover-<sid>.md (system temp) so the operator can /clear and re-inject it via @/tmp/prune-handover-<sid>.md without losing what matters. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
 disable-model-invocation: true
 argument-hint: [aggressive|conservative|keyword]
 allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write
@@ -16,7 +16,7 @@ Session info (expanded before you see this):
 - **Transcript path (resolved)**: !`echo "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl"`
 - **Transcript size**: !`stat -c '%s bytes, modified %y' "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null | sed 's/\.[0-9]* +/ +/' || echo "MISSING — transcript not found at expected path"`
 - **Transcript line count**: !`wc -l < "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null || echo "n/a"`
-- **Handover file path** (use this in Step 5 footer + Step 6 Write call + hand-off message): !`echo ".prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
+- **Handover file path** (use this in Step 6 Write call + hand-off message): !`echo "${TMPDIR:-/tmp}/prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Channel status**: !`bash ${CLAUDE_SKILL_DIR}/banner.sh`
 - **Operator hint**: `$ARGUMENTS`
 
@@ -143,34 +143,29 @@ Previous session distilled the following context. Treat this as your working mem
 ## Other kept context
 
 <anything else that was kept>
-
----
-
-<!-- prune-watch cleanup footer — keep verbatim, substitute the actual handover filename -->
-**Cleanup:** This brief is single-use scratch from `/prune-watch:prune`. After absorbing the context above, delete this file: `rm <HANDOVER-PATH>`. Don't reference it in your reply.
 ````
 
 Skip sections that have no kept buckets. Do not pad. Do not invent content — only use what the bucketer returned.
 
 Within each section, list `novelty: new` buckets before `novelty: documented` ones — `new` buckets are why the brief exists at all; `documented` ones are the operator-overridden "keep this even though CLAUDE.md covers it" cases.
 
-The cleanup footer is required — substitute `<HANDOVER-PATH>` with the actual **Handover file path** value shown at the top of this skill (e.g. `.prune-handover-1f71f5fb.md`). The post-`/clear` Claude reads the file via `@…` and the footer tells it to remove the file once absorbed.
+Do **not** add a self-deletion footer. The handover file lives in the system temp dir; the OS cleans it up at reboot, and the operator can delete it manually before then if they want. Auto-deletion would feel scary and prevent recovery if the post-`/clear` Claude misreads.
 
 ## Step 6 — Hand off
 
-**Save the seed brief to disk** using the `Write` tool with path = the **Handover file path** value from the session-info block at the top (e.g. `.prune-handover-1f71f5fb.md`). The path is project-root-relative and per-session-unique (first 8 chars of the session id), so concurrent prunes from sibling sessions in the same workspace don't collide.
+**Save the seed brief to disk** using the `Write` tool with path = the **Handover file path** value from the session-info block at the top (e.g. `/tmp/prune-handover-1f71f5fb.md`). The path is in the system temp dir and per-session-unique (first 8 chars of the session id), so concurrent prunes from sibling sessions don't collide and the file never lands in the project tree (no gitignore needed).
 
 This file is the carryover artefact — the operator will inject it into the fresh post-`/clear` session via Claude Code's `@` file-mention picker, so they don't have to copy from the terminal.
 
-Then print a short hand-off message — NOT the full brief, just the path and instructions. Don't render the brief inline; the file IS the deliverable. Substitute the actual filename into the message:
+Then print a short hand-off message — NOT the full brief, just the path and instructions. Don't render the brief inline; the file IS the deliverable. Substitute the actual full path into the message:
 
-> Prune ready. Brief saved to `.prune-handover-XXXXXXXX.md` (N kept buckets, ~Xk tokens).
+> Prune ready. Brief saved to `/tmp/prune-handover-XXXXXXXX.md` (N kept buckets, ~Xk tokens).
 >
 > To apply:
 > 1. Run `/clear` to reset the session.
-> 2. Type `@.prune-handover-XXXXXXXX.md` as your first message — the `@` picker autocompletes from `.prune-handover-`. Claude Code injects the brief content as your starting context, then the cleanup footer in the brief tells the new session to delete the file.
+> 2. Type `@/tmp/prune-handover-XXXXXXXX.md` as your first message — Claude Code injects the brief content as your starting context.
 >
-> One-time: add `.prune-handover-*.md` to your project's `.gitignore` so handovers never end up in commits.
+> The file lives in the system temp dir, so it doesn't pollute your repo and the OS will clean it up at reboot. Re-injectable if you need it again before then; `rm` it manually any time.
 
 Do **not** run `/clear` yourself — it's a user command and applying it would happen before the operator's seen the hand-off message. Leave the operator in control.
 
