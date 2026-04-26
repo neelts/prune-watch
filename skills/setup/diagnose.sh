@@ -46,7 +46,10 @@ while [ $i -lt 8 ]; do
   if [ -z "$PPID_OF" ] || [ "$PPID_OF" = "1" ]; then break; fi
   PID=$PPID_OF
   CMD=$(tr '\0' ' ' </proc/$PID/cmdline 2>/dev/null)
-  if echo "$CMD" | grep -q -- "--channels"; then
+  # Channels can be enabled via either flag — they're alternatives. The dev
+  # flag does NOT contain '--channels' as a substring (single hyphen before
+  # 'channels'), so check both literally.
+  if echo "$CMD" | grep -qE -- '(^| )(--channels|--dangerously-load-development-channels)( |$)'; then
     ENABLED=yes
     break
   fi
