@@ -61,7 +61,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.9' },
+  { name: 'prune-watch', version: '0.2.10' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -167,6 +167,10 @@ pollTimer = setInterval(() => {
     startWatching(found)
     persistState()
     runCheck({ force: false }).catch((e) => log(`initial check failed: ${e}`))
+    // After locking, periodically check if /clear has spawned a newer jsonl in
+    // the same project dir. If so, switch lock and reset push state so a fresh
+    // nudge can fire on the new session.
+    setInterval(maybeReDiscover, 30_000)
   } else if (!owner.sessionId && pollAttempts > DISCOVERY_TIMEOUT_S) {
     // Only time out in the blind-scan path. If we know the session id,
     // poll forever — the file will appear when the user types.
@@ -327,12 +331,25 @@ function newestJsonlIn(dir: string): string | null {
   return best?.path ?? null
 }
 
+let fileWatcher: ReturnType<typeof watch> | null = null
+let watchDebounce: ReturnType<typeof setTimeout> | null = null
+
 function startWatching(path: string) {
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  // Re-entrant: close any prior watcher so we don't leak handles after a switch.
+  if (fileWatcher) {
+    try {
+      fileWatcher.close()
+    } catch {}
+    fileWatcher = null
+  }
+  if (watchDebounce) {
+    clearTimeout(watchDebounce)
+    watchDebounce = null
+  }
   try {
-    watch(path, () => {
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => {
+    fileWatcher = watch(path, () => {
+      if (watchDebounce) clearTimeout(watchDebounce)
+      watchDebounce = setTimeout(() => {
         runCheck({ force: false }).catch((e) => log(`check failed: ${e}`))
       }, DEBOUNCE_MS)
     })
@@ -342,6 +359,37 @@ function startWatching(path: string) {
       runCheck({ force: false }).catch(() => {})
     }, 60_000)
   }
+}
+
+// Detect /clear: every 30s, see if a newer jsonl has appeared in the same
+// project dir. After /clear, claude spawns a fresh session id + new jsonl in
+// the same project dir while the parent process keeps running; the parent's
+// argv still points at the old --resume <id>, so we can't trust it. Project
+// dir + newest mtime is the only signal.
+function maybeReDiscover() {
+  if (!transcriptPath || !owner.cwd) return
+  const projectDir = encodeProjectDir(owner.cwd)
+  const candidate = newestJsonlIn(join(PROJECTS_DIR, projectDir))
+  if (!candidate || candidate === transcriptPath) return
+  let cur, cand
+  try {
+    cand = statSync(candidate)
+  } catch {
+    return
+  }
+  try {
+    cur = statSync(transcriptPath)
+  } catch {
+    cur = null
+  }
+  if (cur && cand.mtimeMs <= cur.mtimeMs) return
+  log(`/clear detected — switching transcript: ${transcriptPath} -> ${candidate}`)
+  transcriptPath = candidate
+  lastNudgeTokens = 0
+  lastPushMs = 0
+  persistState()
+  startWatching(candidate)
+  runCheck({ force: false }).catch((e) => log(`post-switch check failed: ${e}`))
 }
 
 // --- Check + nudge ---------------------------------------------------------
