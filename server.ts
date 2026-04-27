@@ -48,6 +48,7 @@ const CONTEXT_WINDOW_TOKENS = intEnv('PRUNE_WATCH_CONTEXT_WINDOW', 1_000_000)
 const BYTES_PER_TOKEN = intEnv('PRUNE_WATCH_BYTES_PER_TOKEN', 4)
 const DEBOUNCE_MS = intEnv('PRUNE_WATCH_DEBOUNCE_MS', 30_000)
 const MIN_PUSH_INTERVAL_MS = intEnv('PRUNE_WATCH_MIN_PUSH_INTERVAL_MS', 600_000)
+const RENUDGE_DELTA_TOKENS = intEnv('PRUNE_WATCH_RENUDGE_DELTA_TOKENS', 100_000)
 const DISCOVERY_TIMEOUT_S = intEnv('PRUNE_WATCH_DISCOVERY_TIMEOUT_S', 600)
 
 const SERVER_START_MS = Date.now()
@@ -63,7 +64,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.18' },
+  { name: 'prune-watch', version: '0.2.19' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -190,10 +191,12 @@ pollTimer = setInterval(() => {
     startWatching(found)
     persistState()
     runCheck({ force: false }).catch((e) => log(`initial check failed: ${e}`))
-    // After locking, periodically check if /clear has spawned a newer jsonl in
-    // the same project dir. If so, switch lock and reset push state so a fresh
-    // nudge can fire on the new session.
-    setInterval(maybeReDiscover, 30_000)
+    // No periodic re-discovery: when a sibling claude session runs in the same
+    // workspace, both servers would race to lock the active jsonl and double-
+    // push. Pin to the exact path we discovered. Trade-off: after `/clear`
+    // (which spawns a new jsonl in this project dir), this server's watch goes
+    // silent until claude is restarted. Better to lose `/clear` continuity
+    // than to spam the wrong session.
   } else if (!owner.sessionId && pollAttempts > DISCOVERY_TIMEOUT_S) {
     // Only time out in the blind-scan path. If we know the session id,
     // poll forever — the file will appear when the user types.
@@ -384,37 +387,6 @@ function startWatching(path: string) {
   }
 }
 
-// Detect /clear: every 30s, see if a newer jsonl has appeared in the same
-// project dir. After /clear, claude spawns a fresh session id + new jsonl in
-// the same project dir while the parent process keeps running; the parent's
-// argv still points at the old --resume <id>, so we can't trust it. Project
-// dir + newest mtime is the only signal.
-function maybeReDiscover() {
-  if (!transcriptPath || !owner.cwd) return
-  const projectDir = encodeProjectDir(owner.cwd)
-  const candidate = newestJsonlIn(join(PROJECTS_DIR, projectDir))
-  if (!candidate || candidate === transcriptPath) return
-  let cur, cand
-  try {
-    cand = statSync(candidate)
-  } catch {
-    return
-  }
-  try {
-    cur = statSync(transcriptPath)
-  } catch {
-    cur = null
-  }
-  if (cur && cand.mtimeMs <= cur.mtimeMs) return
-  log(`/clear detected — switching transcript: ${transcriptPath} -> ${candidate}`)
-  transcriptPath = candidate
-  lastNudgeTokens = 0
-  lastPushMs = 0
-  persistState()
-  startWatching(candidate)
-  runCheck({ force: false }).catch((e) => log(`post-switch check failed: ${e}`))
-}
-
 // --- Check + nudge ---------------------------------------------------------
 
 type CheckResult = {
@@ -452,19 +424,34 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
   if (tokens < THRESHOLD_TOKENS && !force) {
     return { tokens, pct, snoozed, pushed: false, reason: 'below threshold' }
   }
-  // Time-based cooldown so pushes don't feedback-loop. Each surfaced nudge is
-  // itself a transcript write, which triggers fs.watch, which would re-push.
-  // Without this gate the model surfaces the nudge on every single reply.
-  // 10 min default leaves plenty of room for one nudge to land + the operator
-  // to either /prune-watch:prune, snooze, or ignore for a while.
+  // Re-push cooldown — TWO conditions, BOTH must pass to fire a fresh nudge:
+  //
+  //   1. sinceLastPush >= MIN_PUSH_INTERVAL_MS (default 10 min) — keeps each
+  //      surfaced nudge from immediately triggering the next one via the
+  //      surface→write→fs.watch→push feedback loop.
+  //
+  //   2. (tokens - lastNudgeTokens) >= RENUDGE_DELTA_TOKENS (default 100k) —
+  //      stops "every 10 min you get the same nudge" pattern. Operator already
+  //      knows context is heavy; only re-tell them when it grew meaningfully.
+  //
+  // Time alone allowed duplicate-token nudges (we'd push 266k → 266k → 266k as
+  // each cooldown expired). Delta alone allowed feedback loops. Together they
+  // keep nudges to "first time threshold crossed" + "+100k tokens later".
   const sinceLastPush = Date.now() - lastPushMs
-  if (!force && lastPushMs > 0 && sinceLastPush < MIN_PUSH_INTERVAL_MS) {
+  const sinceLastTokens = tokens - lastNudgeTokens
+  if (
+    !force &&
+    lastPushMs > 0 &&
+    (sinceLastPush < MIN_PUSH_INTERVAL_MS || sinceLastTokens < RENUDGE_DELTA_TOKENS)
+  ) {
+    const timeRem = Math.max(0, MIN_PUSH_INTERVAL_MS - sinceLastPush)
+    const tokRem = Math.max(0, RENUDGE_DELTA_TOKENS - sinceLastTokens)
     return {
       tokens,
       pct,
       snoozed,
       pushed: false,
-      reason: `cooldown (${Math.round((MIN_PUSH_INTERVAL_MS - sinceLastPush) / 1000)}s remaining)`,
+      reason: `cooldown (${Math.round(timeRem / 1000)}s + ${tokRem.toLocaleString()} tokens remaining)`,
     }
   }
 
