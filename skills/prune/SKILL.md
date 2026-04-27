@@ -29,9 +29,16 @@ If **Channel status** says `NOT ENABLED`, surface a one-line note to the operato
 
 Otherwise continue.
 
-## Step 2 — Delegate to the bucketer
+## Step 2 — Snooze, then delegate to the bucketer
 
-First, find any CLAUDE.md files the bucketer should use as the documented baseline. Check these in order; include each one that exists:
+**First, auto-snooze the channel for 15 minutes** so a context-size nudge can't surface mid-prune. Call the prune-watch snooze tool with `{"seconds": 900}` (the snooze auto-expires; if anything goes wrong below, nudges re-arm by themselves):
+
+- **tool**: `mcp__plugin_prune-watch_prune-watch__snooze`
+- **arguments**: `{"seconds": 900}`
+
+If the snooze tool isn't available (plugin's MCP server not running in this session), skip silently and continue — the prune still works, you just risk one nudge interrupting the operator's view.
+
+Next, find any CLAUDE.md files the bucketer should use as the documented baseline. Check these in order; include each one that exists:
 
 - `<cwd>/CLAUDE.md` (project root)
 - `<cwd>/.claude/CLAUDE.md` (project-local override)
@@ -112,7 +119,7 @@ The operator replies with one of the four forms above. In the next turn, parse t
 - `accept` → kept = all buckets where `keep_default == true`
 - `keep 1,3,5` → kept = buckets with those ids (override defaults entirely)
 - `drop 2,4` → kept = defaults minus those ids
-- `cancel` → stop here, tell the operator "Prune cancelled, nothing changed."
+- `cancel` → call the prune-watch unsnooze tool to re-arm nudges, then tell the operator "Prune cancelled, nothing changed."
 
 Always surface the final kept list back to the operator before building the brief, so they can double-check.
 
@@ -174,6 +181,8 @@ Then print a short hand-off message — NOT the full brief, just the path and in
 > The moved file stays recoverable in temp until system reboot — re-injectable from there if you need it again, or `rm` it any time.
 
 Do **not** run `/clear` yourself — it's a user command and applying it would happen before the operator's seen the hand-off message. Leave the operator in control.
+
+After printing the hand-off message, call the prune-watch unsnooze tool to re-arm nudges immediately (the 15-min auto-snooze from Step 2 would also expire on its own, but unsnoozing now keeps the next session's threshold-tracking honest).
 
 ## Notes for you
 

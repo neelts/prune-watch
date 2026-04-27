@@ -52,8 +52,10 @@ const DISCOVERY_TIMEOUT_S = intEnv('PRUNE_WATCH_DISCOVERY_TIMEOUT_S', 600)
 
 const SERVER_START_MS = Date.now()
 
-// In-memory session state (lifecycle is the session — process exit on /quit)
-let snoozed = false
+// In-memory session state (lifecycle is the session — process exit on /quit).
+// snoozedUntilMs: 0 = not snoozed; Number.MAX_SAFE_INTEGER = snoozed indefinitely.
+// Otherwise, an absolute ms timestamp the snooze expires at.
+let snoozedUntilMs = 0
 let lastNudgeTokens = 0
 let lastPushMs = 0
 let transcriptPath: string | null = null
@@ -61,7 +63,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.17' },
+  { name: 'prune-watch', version: '0.2.18' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -83,12 +85,22 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'snooze',
       description:
-        'Silence further prune-watch nudges in the current session. State persists until the session ends or unsnooze is called.',
-      inputSchema: { type: 'object', properties: {} },
+        'Silence further prune-watch nudges. With no argument, silences indefinitely (until unsnooze, or session ends). With `seconds`, silences for that duration then auto-re-arms — use this when starting an operation that takes a while (like /prune-watch:prune itself) so a nudge cannot interrupt it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          seconds: {
+            type: 'number',
+            description:
+              'Optional. Auto-expire the snooze after this many seconds. Omit for indefinite snooze.',
+          },
+        },
+      },
     },
     {
       name: 'unsnooze',
-      description: 'Re-arm prune-watch nudges in the current session.',
+      description:
+        'Re-arm prune-watch nudges immediately, regardless of any pending auto-expire.',
       inputSchema: { type: 'object', properties: {} },
     },
     {
@@ -102,12 +114,20 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (req.params.name === 'snooze') {
-    snoozed = true
+    const args = (req.params.arguments ?? {}) as { seconds?: number }
+    if (typeof args.seconds === 'number' && args.seconds > 0) {
+      snoozedUntilMs = Date.now() + args.seconds * 1000
+      persistState()
+      return text(
+        `prune-watch nudges silenced for ${args.seconds}s (auto-re-arms at ${new Date(snoozedUntilMs).toISOString()}).`,
+      )
+    }
+    snoozedUntilMs = Number.MAX_SAFE_INTEGER
     persistState()
-    return text('prune-watch nudges silenced for this session.')
+    return text('prune-watch nudges silenced indefinitely (until unsnooze or session ends).')
   }
   if (req.params.name === 'unsnooze') {
-    snoozed = false
+    snoozedUntilMs = 0
     persistState()
     return text('prune-watch nudges re-armed.')
   }
@@ -406,6 +426,7 @@ type CheckResult = {
 }
 
 async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
+  const snoozed = isSnoozed()
   if (!transcriptPath) {
     return { tokens: 0, pct: 0, snoozed, pushed: false, reason: 'no transcript yet' }
   }
@@ -540,6 +561,10 @@ function text(t: string) {
   return { content: [{ type: 'text' as const, text: t }] }
 }
 
+function isSnoozed(): boolean {
+  return snoozedUntilMs > Date.now()
+}
+
 function persistState(extra: Record<string, unknown> = {}) {
   if (!STATE_FILE) return // no session id → no state file (avoid misleading state-unknown.json)
   try {
@@ -548,7 +573,11 @@ function persistState(extra: Record<string, unknown> = {}) {
       JSON.stringify(
         {
           transcript: transcriptPath,
-          snoozed,
+          snoozed: isSnoozed(),
+          snoozedUntil:
+            snoozedUntilMs > 0 && snoozedUntilMs < Number.MAX_SAFE_INTEGER
+              ? new Date(snoozedUntilMs).toISOString()
+              : null,
           lastNudgeTokens,
           thresholdTokens: THRESHOLD_TOKENS,
           contextWindowTokens: CONTEXT_WINDOW_TOKENS,
