@@ -3,7 +3,7 @@ name: prune
 description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to .prune-handover-<sid>.md in the project root so the operator can /clear and re-inject it via @.prune-handover-<sid>.md. The post-/clear Claude moves the file to system temp after absorbing, so the workspace doesn't get polluted but the brief stays recoverable. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
 disable-model-invocation: true
 argument-hint: [aggressive|conservative|keyword]
-allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write
+allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write Edit AskUserQuestion
 ---
 
 # /prune — operator-guided context prune
@@ -102,24 +102,50 @@ CLAUDE.md cross-checked: <list claude_md_read paths, or "none — no docs baseli
 [x] = kept by default, [ ] = dropped by default
 NEW = not in CLAUDE.md (load-bearing, you'll lose it on /clear)
 DOC = covered in CLAUDE.md (safe to drop, post-/clear session re-reads it)
-
-Reply with:
-  keep 1,3,5          → keep these (override all defaults)
-  drop 2,4            → drop these (from the default-kept set)
-  accept              → go with defaults
-  cancel              → abort, change nothing
 ```
 
 Use checkboxes based on `keep_default`. Always render `NEW` / `DOC` before the importance label so the load-bearing axis is the most scannable column. Keep the summary line to one line per bucket (truncate if needed). If `claude_md_read` is empty, replace the cross-checked line with a one-line note: "No CLAUDE.md found — novelty is best-effort guesswork."
 
-## Step 4 — Await operator reply
+## Step 4 — Ask the operator how to apply
 
-The operator replies with one of the four forms above. In the next turn, parse their reply into a final kept-set:
+After printing the toggle list, call the `AskUserQuestion` tool. Build the options dynamically:
 
-- `accept` → kept = all buckets where `keep_default == true`
-- `keep 1,3,5` → kept = buckets with those ids (override defaults entirely)
-- `drop 2,4` → kept = defaults minus those ids
-- `cancel` → call the prune-watch unsnooze tool to re-arm nudges, then tell the operator "Prune cancelled, nothing changed."
+- Always include: `Accept (Recommended)`, `Customize`, `Cancel`
+- Include `Accept & note` ONLY if `claude_md_read` was non-empty (i.e., a CLAUDE.md exists). Skipping it when no CLAUDE.md exists keeps the dialog from offering an option that would have to create the file from scratch — a bigger commitment than the operator probably wanted.
+
+Tool call shape:
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Apply this prune?",
+    header: "Prune",
+    multiSelect: false,
+    options: [
+      { label: "Accept (Recommended)",
+        description: "Use the default keep set (the [x] rows above). Build the seed brief and hand off." },
+      { label: "Accept & note",  // OMIT this option if claude_md_read is empty
+        description: "Same as Accept, AND append the kept `new` buckets to CLAUDE.md as a dated session-notes block (curate or move them later; safe to delete)." },
+      { label: "Customize",
+        description: "Pick specific buckets to keep or drop. You'll then reply with `keep 1,3,5` or `drop 2,4`." },
+      { label: "Cancel",
+        description: "Abort the prune. No brief written. Channel nudges re-armed." },
+    ],
+  }],
+})
+```
+
+The `Other` option is auto-added by the tool — that handles any free-form reply (e.g. `keep 1,3,5`) without needing a separate fallback path.
+
+Map the answer to a kept set + side effects:
+
+| answer | kept set | side effect |
+| --- | --- | --- |
+| `Accept (Recommended)` | all `keep_default: true` | none |
+| `Accept & note` | all `keep_default: true` | also append `new` kept buckets to CLAUDE.md (Step 5b) |
+| `Customize` | ask the operator in the next turn for `keep …` / `drop …` (free-form) | none |
+| `Cancel` | (none) | call the prune-watch unsnooze tool, tell operator "Prune cancelled, nothing changed.", stop |
+| `Other` (free-form) | parse `keep 1,3,5`, `drop 2,4`, `accept`, `cancel` as before | none |
 
 Always surface the final kept list back to the operator before building the brief, so they can double-check.
 
@@ -163,6 +189,31 @@ Skip sections that have no kept buckets. Do not pad. Do not invent content — o
 Within each section, list `novelty: new` buckets before `novelty: documented` ones — `new` buckets are why the brief exists at all; `documented` ones are the operator-overridden "keep this even though CLAUDE.md covers it" cases.
 
 The absorb footer is required — substitute `<HANDOVER-PATH>` with the **Handover file path** value (e.g. `.prune-handover-1f71f5fb.md`) and `<POST-ABSORB-PATH>` with the **Post-absorb destination** value (e.g. `/tmp/prune-handover-1f71f5fb.md`) from the session-info block at the top. Both come from the same skill render, so they reference the same session-id slice.
+
+## Step 5b — (only if the operator chose `Accept & note`) append to CLAUDE.md
+
+Skip this step entirely unless the answer in Step 4 was `Accept & note`. When it was:
+
+1. Read the project's CLAUDE.md (the first path in `claude_md_read` from the bucketer output).
+2. Append a clearly-marked, dated block at the END of the file. Use the `Edit` tool with `old_string = ""` semantics is unsupported — instead, Read the current content, then Write the full content with the new block appended. Or use `Edit` with the file's last few lines as `old_string` and `<old_string> + new block` as `new_string`. Either works; use whichever is cleaner.
+3. Block content (substitute the real session id and ISO date):
+
+```markdown
+
+
+<!-- prune-watch session notes — appended {ISO date} from session {short-sid} -->
+## Session notes ({YYYY-MM-DD})
+
+Auto-appended by `/prune-watch:prune` (Accept & note). These are decisions/facts that lived only in the conversation, not yet in the rest of CLAUDE.md. **Curate, move, or delete.**
+
+<one ## subsection per kept `novelty: new` bucket — use the bucket title as the heading, summary + key_facts as bullets>
+
+<!-- end prune-watch notes -->
+```
+
+Only `novelty: new` buckets in the kept set go into this block. `documented` buckets are by definition already in CLAUDE.md — appending them again would be redundant.
+
+After writing, tell the operator briefly: *"Also appended N notes to CLAUDE.md — review when convenient."* Then continue to Step 6.
 
 ## Step 6 — Hand off
 
