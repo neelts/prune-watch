@@ -3,7 +3,7 @@ name: prune
 description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to .prune-handover-<sid>.md in the project root so the operator can /clear and re-inject it via @.prune-handover-<sid>.md. The post-/clear Claude moves the file to system temp after absorbing, so the workspace doesn't get polluted but the brief stays recoverable. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
 disable-model-invocation: true
 argument-hint: [aggressive|conservative|keyword]
-allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write Edit AskUserQuestion
+allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write Edit AskUserQuestion ToolSearch
 ---
 
 # /prune — operator-guided context prune
@@ -108,7 +108,15 @@ Use checkboxes based on `keep_default`. Always render `NEW` / `DOC` before the i
 
 ## Step 4 — Ask the operator how to apply
 
-After printing the toggle list, prompt the operator with four options. **Try `AskUserQuestion` first; fall back to a plain-text prompt if that tool isn't available in this harness** — it's missing in some Claude Code environments and you'll know because calling it errors or doesn't surface a UI.
+After printing the toggle list, prompt the operator with four options. **Strongly prefer the `AskUserQuestion` dialog** — it's better UX than free-text. Only fall back to plain text if you've genuinely confirmed the tool is unavailable.
+
+### Acquiring `AskUserQuestion`
+
+In standard Claude Code installs, `AskUserQuestion` ships as a **deferred tool** — it appears in the deferred-tools list at session start but isn't directly callable until you load its schema. **Before falling back to plain text, do this:**
+
+1. Check whether `AskUserQuestion` is already in your live tool list. If so, skip to "Path A" below.
+2. If not, look at the deferred-tools list. If `AskUserQuestion` is there, load it: call `ToolSearch` with `query: "select:AskUserQuestion"`. Then call it normally.
+3. Only if `AskUserQuestion` is in NEITHER the live list NOR the deferred list does the harness genuinely lack it — fall through to "Path B".
 
 ### Building the option set
 

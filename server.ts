@@ -64,7 +64,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.21' },
+  { name: 'prune-watch', version: '0.2.22' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
