@@ -108,12 +108,18 @@ Use checkboxes based on `keep_default`. Always render `NEW` / `DOC` before the i
 
 ## Step 4 — Ask the operator how to apply
 
-After printing the toggle list, call the `AskUserQuestion` tool. Build the options dynamically:
+After printing the toggle list, prompt the operator with four options. **Try `AskUserQuestion` first; fall back to a plain-text prompt if that tool isn't available in this harness** — it's missing in some Claude Code environments and you'll know because calling it errors or doesn't surface a UI.
 
-- Always include: `Accept (Recommended)`, `Customize`, `Cancel`
-- Include `Accept & note` ONLY if `claude_md_read` was non-empty (i.e., a CLAUDE.md exists). Skipping it when no CLAUDE.md exists keeps the dialog from offering an option that would have to create the file from scratch — a bigger commitment than the operator probably wanted.
+### Building the option set
 
-Tool call shape:
+The same four options are shown either way:
+
+- **Accept (recommended)** — use the default keep set (the `[x]` rows), build brief, hand off
+- **Accept & note** — same as accept, plus append the kept `new` buckets to CLAUDE.md as a dated session-notes block (omit this option entirely if `claude_md_read` was empty in the bucketer output, i.e. no CLAUDE.md exists in the project)
+- **Customize** — pick specific buckets via `keep 1,3,5` or `drop 2,4` (operator types the list in their next turn)
+- **Cancel** — abort, no brief written, channel re-armed
+
+### Path A — `AskUserQuestion` available
 
 ```
 AskUserQuestion({
@@ -135,17 +141,33 @@ AskUserQuestion({
 })
 ```
 
-The `Other` option is auto-added by the tool — that handles any free-form reply (e.g. `keep 1,3,5`) without needing a separate fallback path.
+The `Other` option is auto-added by the tool, covering free-form replies.
 
-Map the answer to a kept set + side effects:
+### Path B — plain-text fallback (when `AskUserQuestion` errors or isn't available)
 
-| answer | kept set | side effect |
+Print this block verbatim (omit the `accept & note` line if no CLAUDE.md):
+
+```
+Apply this prune?
+- accept — use the default keep set, build brief, hand off
+- accept & note — same as accept, plus append the kept new buckets to CLAUDE.md as a dated session-notes block
+- customize — pick specific buckets via `keep 1,3,5` or `drop 2,4`
+- cancel — abort, no brief written, channel re-armed
+```
+
+Then wait for the operator's next turn.
+
+### Mapping answers to outcomes
+
+The mapping below applies to BOTH paths — match case-insensitively. The plain-text path will give you lowercase strings; the dialog gives you the labelled forms.
+
+| answer (any case) | kept set | side effect |
 | --- | --- | --- |
-| `Accept (Recommended)` | all `keep_default: true` | none |
-| `Accept & note` | all `keep_default: true` | also append `new` kept buckets to CLAUDE.md (Step 5b) |
-| `Customize` | ask the operator in the next turn for `keep …` / `drop …` (free-form) | none |
-| `Cancel` | (none) | call the prune-watch unsnooze tool, tell operator "Prune cancelled, nothing changed.", stop |
-| `Other` (free-form) | parse `keep 1,3,5`, `drop 2,4`, `accept`, `cancel` as before | none |
+| `accept` / `Accept (Recommended)` | all `keep_default: true` | none |
+| `accept & note` / `Accept & note` | all `keep_default: true` | also append `new` kept buckets to CLAUDE.md (Step 5b) |
+| `customize` / `Customize` | ask the operator in the next turn for `keep …` / `drop …` | none |
+| `cancel` / `Cancel` | (none) | call the prune-watch unsnooze tool, tell operator "Prune cancelled, nothing changed.", stop |
+| free-form `keep 1,3,5` / `drop 2,4` (any source) | parse directly | none |
 
 Always surface the final kept list back to the operator before building the brief, so they can double-check.
 
