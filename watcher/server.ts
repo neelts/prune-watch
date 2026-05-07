@@ -4,7 +4,7 @@
  *
  * Watches the active session's transcript JSONL on disk. When the byte-count
  * crosses a token threshold, pushes a one-way nudge into the session
- * suggesting the operator run /prune-watch:prune.
+ * suggesting the operator run /prune:distill or /prune:handover.
  *
  * Exposes three tools so the operator (or Claude) can manage nudges:
  *   - snooze    silence further nudges this session
@@ -64,7 +64,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.2.22' },
+  { name: 'prune-watch', version: '0.3.0' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -74,10 +74,10 @@ const mcp = new Server(
       'Events from prune-watch arrive as <channel source="prune-watch" tokens="..." pct="...">. ' +
       'These are one-way nudges that the operator\'s context window is filling up. ' +
       'CRITICAL — the operator cannot see channel tags directly. They only see your reply. ' +
-      'When a prune-watch channel event arrives, your VERY NEXT user-visible reply MUST start with a one-line surfaced notice, on its own line, before anything else (including before answering whatever the operator just asked). Format: "📋 prune-watch: ~Xk tokens (Y%) — consider /prune-watch:prune." Then proceed to answer. ' +
+      'When a prune-watch channel event arrives, your VERY NEXT user-visible reply MUST start with a one-line surfaced notice, on its own line, before anything else (including before answering whatever the operator just asked). Format: "📋 prune-watch: ~Xk tokens (Y%) — consider /prune:distill or /prune:handover." Then proceed to answer. ' +
       'After you have surfaced one notice, you do not need to repeat it on subsequent turns until a new prune-watch event arrives. ' +
       'If the operator says to silence them, call the snooze tool. ' +
-      'Do not act on the nudge yourself by initiating /prune-watch:prune unprompted; pruning is operator-driven.',
+      'Do not act on the nudge yourself by initiating /prune:distill unprompted; pruning is operator-driven.',
   },
 )
 
@@ -86,7 +86,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: 'snooze',
       description:
-        'Silence further prune-watch nudges. With no argument, silences indefinitely (until unsnooze, or session ends). With `seconds`, silences for that duration then auto-re-arms — use this when starting an operation that takes a while (like /prune-watch:prune itself) so a nudge cannot interrupt it.',
+        'Silence further prune-watch nudges. With no argument, silences indefinitely (until unsnooze, or session ends). With `seconds`, silences for that duration then auto-re-arms — use this when starting an operation that takes a while (like /prune:distill itself) so a nudge cannot interrupt it.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -457,7 +457,7 @@ async function runCheck({ force }: { force: boolean }): Promise<CheckResult> {
 
   const content =
     `[ATTENTION ASSISTANT] prune-watch nudge: context at ~${tokens.toLocaleString()} tokens (~${pct}% of ${formatK(CONTEXT_WINDOW_TOKENS)}). ` +
-    `Per the prune-watch channel instructions, surface a one-line "📋 prune-watch: ~${Math.round(tokens / 1000)}k tokens (${pct}%) — consider /prune-watch:prune." notice to the operator at the start of your next reply, then proceed with whatever they asked. ` +
+    `Per the prune-watch channel instructions, surface a one-line "📋 prune-watch: ~${Math.round(tokens / 1000)}k tokens (${pct}%) — consider /prune:distill or /prune:handover." notice to the operator at the start of your next reply, then proceed with whatever they asked. ` +
     `If the operator wants nudges silenced, call the snooze tool.`
 
   try {

@@ -1,6 +1,6 @@
 ---
 name: transcript-bucketer
-description: Reads a Claude Code session transcript (JSONL) and returns a ranked list of context buckets for operator-guided pruning. Use when an operator invokes /prune-watch:prune.
+description: Reads a Claude Code session transcript (JSONL) and returns a ranked list of context buckets for operator-guided pruning. Use when an operator invokes /prune:distill.
 model: haiku
 tools: Read, Bash
 color: purple

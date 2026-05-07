@@ -1,9 +1,0 @@
-{
-  "name": "prune-watch",
-  "description": "Golden-ratio context prune between /clear and /compact. Operator-guided bucketing before context rot.",
-  "version": "0.2.22",
-  "author": {
-    "name": "neelts"
-  },
-  "homepage": "https://github.com/neelts/prune-watch"
-}

@@ -1,14 +1,14 @@
 ---
-name: prune
-description: Golden-ratio context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to .prune-handover-<sid>.md in the project root so the operator can /clear and re-inject it via @.prune-handover-<sid>.md. The post-/clear Claude moves the file to system temp after absorbing, so the workspace doesn't get polluted but the brief stays recoverable. Use when the operator invokes /prune-watch:prune, or when they ask to "prune context" or "compact smartly". For first-time setup or to enable proactive nudges, run /prune-watch:setup.
+name: distill
+description: Transcript-bucketing context prune. Read this session's transcript, delegate bucketing to a fresh subagent, show the operator a ranked toggle list, and write a seed brief to .prune-handover-<sid>.md in the project root so the operator can /clear and re-inject it via @.prune-handover-<sid>.md. The post-/clear Claude moves the file to system temp after absorbing, so the workspace doesn't get polluted but the brief stays recoverable. Use when the operator invokes /prune:distill, or when they ask to "prune context" or "compact smartly". For first-time setup, run /prune:setup. For a lighter-weight in-context brief without subagent bucketing, see /prune:handover.
 disable-model-invocation: true
 argument-hint: [aggressive|conservative|keyword]
 allowed-tools: Bash(bash *) Bash(stat *) Bash(wc *) Bash(test *) Bash(echo *) Read Write Edit AskUserQuestion ToolSearch
 ---
 
-# /prune — operator-guided context prune
+# /prune:distill — operator-guided context prune
 
-The operator just invoked `/prune-watch:prune`. Your job is to **orchestrate** the prune. The actual bucketing happens in a fresh subagent (`transcript-bucketer`) so the analysis isn't done in a degraded context window.
+The operator just invoked `/prune:distill`. Your job is to **orchestrate** the prune. The actual bucketing happens in a fresh subagent (`transcript-bucketer`) so the analysis isn't done in a degraded context window.
 
 Session info (expanded before you see this):
 
@@ -18,25 +18,22 @@ Session info (expanded before you see this):
 - **Transcript line count**: !`wc -l < "$HOME/.claude/projects/$(pwd | sed 's|/|-|g')/${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null || echo "n/a"`
 - **Handover file path** (workspace; write here so the operator can `@`-mention with project-tree autocomplete): !`echo ".prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Post-absorb destination** (where the post-`/clear` Claude moves it after reading): !`echo "${TMPDIR:-/tmp}/prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
-- **Channel status**: !`bash ${CLAUDE_SKILL_DIR}/banner.sh`
 - **Operator hint**: `$ARGUMENTS`
 
 ## Step 1 — Sanity check
 
 If the transcript path above says `MISSING`, stop and tell the operator: "Can't find the transcript at the expected path. Check `~/.claude/projects/` for the right session file." Do not proceed.
 
-If **Channel status** says `NOT ENABLED`, surface a one-line note to the operator BEFORE proceeding with the prune — something like *"Heads-up: prune-watch channel isn't enabled in this session, so you won't get proactive nudges going forward. Pruning will still work right now."* Then continue with the prune. Don't block on it; it's informational.
-
 Otherwise continue.
 
-## Step 2 — Snooze, then delegate to the bucketer
+## Step 2 — Snooze (if the watcher plugin is installed), then delegate to the bucketer
 
-**First, auto-snooze the channel for 15 minutes** so a context-size nudge can't surface mid-prune. Call the prune-watch snooze tool with `{"seconds": 900}` (the snooze auto-expires; if anything goes wrong below, nudges re-arm by themselves):
+**If the optional `prune-watch` channel plugin is installed in this session**, auto-snooze the channel for 15 minutes so a context-size nudge can't surface mid-prune. Call the snooze tool with `{"seconds": 900}` (the snooze auto-expires; if anything goes wrong below, nudges re-arm by themselves):
 
 - **tool**: `mcp__plugin_prune-watch_prune-watch__snooze`
 - **arguments**: `{"seconds": 900}`
 
-If the snooze tool isn't available (plugin's MCP server not running in this session), skip silently and continue — the prune still works, you just risk one nudge interrupting the operator's view.
+If the snooze tool isn't available (the watcher plugin isn't installed, or its MCP server isn't running in this session), **skip silently and continue** — the prune still works exactly the same. The watcher is optional; most users will never have it.
 
 Next, find any CLAUDE.md files the bucketer should use as the documented baseline. Check these in order; include each one that exists:
 
@@ -160,7 +157,7 @@ Apply this prune?
 - accept — use the default keep set, build brief, hand off
 - accept & note — same as accept, plus append the kept new buckets to CLAUDE.md as a dated session-notes block
 - customize — pick specific buckets via `keep 1,3,5` or `drop 2,4`
-- cancel — abort, no brief written, channel re-armed
+- cancel — abort, no brief written, snooze (if the watcher is installed) released
 ```
 
 Then wait for the operator's next turn.
@@ -174,7 +171,7 @@ The mapping below applies to BOTH paths — match case-insensitively. The plain-
 | `accept` / `Accept (Recommended)` | all `keep_default: true` | none |
 | `accept & note` / `Accept & note` | all `keep_default: true` | also append `new` kept buckets to CLAUDE.md (Step 5b) |
 | `customize` / `Customize` | ask the operator in the next turn for `keep …` / `drop …` | none |
-| `cancel` / `Cancel` | (none) | call the prune-watch unsnooze tool, tell operator "Prune cancelled, nothing changed.", stop |
+| `cancel` / `Cancel` | (none) | if the watcher's unsnooze tool is available, call it (otherwise skip); tell operator "Prune cancelled, nothing changed.", stop |
 | free-form `keep 1,3,5` / `drop 2,4` (any source) | parse directly | none |
 
 Always surface the final kept list back to the operator before building the brief, so they can double-check.
@@ -234,7 +231,7 @@ Skip this step entirely unless the answer in Step 4 was `Accept & note`. When it
 <!-- prune-watch session notes — appended {ISO date} from session {short-sid} -->
 ## Session notes ({YYYY-MM-DD})
 
-Auto-appended by `/prune-watch:prune` (Accept & note). These are decisions/facts that lived only in the conversation, not yet in the rest of CLAUDE.md. **Curate, move, or delete.**
+Auto-appended by `/prune:distill` (Accept & note). These are decisions/facts that lived only in the conversation, not yet in the rest of CLAUDE.md. **Curate, move, or delete.**
 
 <one ## subsection per kept `novelty: new` bucket — use the bucket title as the heading, summary + key_facts as bullets>
 
@@ -263,7 +260,7 @@ Then print a short hand-off message — NOT the full brief, just the path and in
 
 Do **not** run `/clear` yourself — it's a user command and applying it would happen before the operator's seen the hand-off message. Leave the operator in control.
 
-After printing the hand-off message, call the prune-watch unsnooze tool to re-arm nudges immediately (the 15-min auto-snooze from Step 2 would also expire on its own, but unsnoozing now keeps the next session's threshold-tracking honest).
+After printing the hand-off message, if the watcher's unsnooze tool is available call it to re-arm nudges immediately. If the watcher plugin isn't installed, skip — the auto-snooze from Step 2 was a no-op anyway.
 
 ## Notes for you
 
