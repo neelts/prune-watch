@@ -50,6 +50,11 @@ const DEBOUNCE_MS = intEnv('PRUNE_WATCH_DEBOUNCE_MS', 30_000)
 const MIN_PUSH_INTERVAL_MS = intEnv('PRUNE_WATCH_MIN_PUSH_INTERVAL_MS', 600_000)
 const RENUDGE_DELTA_TOKENS = intEnv('PRUNE_WATCH_RENUDGE_DELTA_TOKENS', 100_000)
 const DISCOVERY_TIMEOUT_S = intEnv('PRUNE_WATCH_DISCOVERY_TIMEOUT_S', 600)
+// How long the watched file must be quiet (no fs.watch events) before we look
+// for a newer jsonl in the same project dir. 120s is long enough to avoid false
+// triggers from brief write pauses, but short enough to catch /clear within
+// a couple of minutes. Configurable for testing.
+const CLEAR_DETECT_INACTIVITY_MS = intEnv('PRUNE_WATCH_CLEAR_DETECT_INACTIVITY_MS', 120_000)
 
 const SERVER_START_MS = Date.now()
 
@@ -64,7 +69,7 @@ let transcriptPath: string | null = null
 // --- MCP server setup -------------------------------------------------------
 
 const mcp = new Server(
-  { name: 'prune-watch', version: '0.3.0' },
+  { name: 'prune-watch', version: '0.4.0' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
@@ -359,6 +364,8 @@ function newestJsonlIn(dir: string): string | null {
 
 let fileWatcher: ReturnType<typeof watch> | null = null
 let watchDebounce: ReturnType<typeof setTimeout> | null = null
+let lastFsWatchEventMs = 0
+let clearDetectTimer: ReturnType<typeof setInterval> | null = null
 
 function startWatching(path: string) {
   // Re-entrant: close any prior watcher so we don't leak handles after a switch.
@@ -372,8 +379,11 @@ function startWatching(path: string) {
     clearTimeout(watchDebounce)
     watchDebounce = null
   }
+  // Reset the idle clock whenever we lock a (possibly new) file.
+  lastFsWatchEventMs = Date.now()
   try {
     fileWatcher = watch(path, () => {
+      lastFsWatchEventMs = Date.now()
       if (watchDebounce) clearTimeout(watchDebounce)
       watchDebounce = setTimeout(() => {
         runCheck({ force: false }).catch((e) => log(`check failed: ${e}`))
@@ -385,6 +395,81 @@ function startWatching(path: string) {
       runCheck({ force: false }).catch(() => {})
     }, 60_000)
   }
+  // Start /clear detection only when we know the cwd so we can scope the scan
+  // to exactly this session's project dir.
+  if (owner.cwd) {
+    if (clearDetectTimer) clearInterval(clearDetectTimer)
+    clearDetectTimer = setInterval(maybeSwitchPostClear, 30_000)
+  }
+}
+
+// Detect that the operator ran /clear in this session.
+//
+// /clear creates a fresh session-id + new jsonl in the SAME project dir while
+// the parent claude process keeps running with its original --resume argv. The
+// /proc walk therefore keeps returning the old session id, so we cannot use it
+// as the arbiter post-clear. Instead we use inactivity on the locked file as
+// the signal: if no fs.watch event has fired for CLEAR_DETECT_INACTIVITY_MS,
+// the active session likely moved on. We then look for a newer jsonl in the
+// same project dir and, if found, switch the lock.
+//
+// Safety vs the old 0.2.10 approach: the 0.2.10 periodic scan ran unconditionally
+// every 30s, letting sibling channel servers in the same workspace race to grab
+// the same newly-created jsonl and double-push. The inactivity gate prevents
+// this: a sibling session that is actively running writes to its own file
+// regularly, so its server's lastFsWatchEventMs stays fresh and this function
+// returns early. The residual risk (both sessions happen to be idle
+// simultaneously when /clear fires) is low and self-correcting — if the
+// "wrong" server latches onto the new file temporarily, the nudge is harmless
+// (it says "context is growing, consider pruning") and the server re-locks to
+// the correct file on the next /clear cycle.
+function maybeSwitchPostClear() {
+  if (!transcriptPath || !owner.cwd) return
+  const idleMs = Date.now() - lastFsWatchEventMs
+  if (idleMs < CLEAR_DETECT_INACTIVITY_MS) return
+
+  const projectPath = join(PROJECTS_DIR, encodeProjectDir(owner.cwd))
+  let curMtime: number
+  try {
+    curMtime = statSync(transcriptPath).mtimeMs
+  } catch {
+    return
+  }
+
+  let entries: string[]
+  try {
+    entries = readdirSync(projectPath)
+  } catch {
+    return
+  }
+
+  let best: { path: string; mtime: number } | null = null
+  for (const f of entries) {
+    if (!f.endsWith('.jsonl')) continue
+    const p = join(projectPath, f)
+    if (p === transcriptPath) continue
+    let st
+    try {
+      st = statSync(p)
+    } catch {
+      continue
+    }
+    if (st.mtimeMs <= curMtime) continue
+    if (!best || st.mtimeMs > best.mtime) {
+      best = { path: p, mtime: st.mtimeMs }
+    }
+  }
+  if (!best) return
+
+  log(
+    `/clear detected (file quiet ${Math.round(idleMs / 1000)}s) — switching: ${transcriptPath} → ${best.path}`,
+  )
+  transcriptPath = best.path
+  lastNudgeTokens = 0
+  lastPushMs = 0
+  persistState()
+  startWatching(best.path)
+  runCheck({ force: false }).catch((e) => log(`post-clear check failed: ${e}`))
 }
 
 // --- Check + nudge ---------------------------------------------------------
