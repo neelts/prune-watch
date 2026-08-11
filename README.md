@@ -12,6 +12,7 @@ Two plugins, install whichever you need:
 
 - **`/prune:distill`** — read this session's transcript, delegate bucketing to a fresh Haiku subagent (`transcript-bucketer`), present a ranked toggle list (`NEW` vs `DOC` axis based on whether the bucket's content is already in your CLAUDE.md), let you accept/customize/cancel via dialog, write a seed brief to `<cwd>/.prune-handover-<sid>.md`. After `/clear` you inject the brief by typing `@.prune-handover-<sid>.md`; the post-`/clear` Claude reads it, then moves the file to `${TMPDIR:-/tmp}/` so it doesn't pollute the repo (recoverable until reboot).
 - **`/prune:handover`** — simpler cousin of `/prune:distill`. No subagent, no transcript bucketing — Claude writes the brief itself from already-loaded conversation context, straight to `<cwd>/.handover-<sid>.md`. Same `@`-mention re-injection flow. Optional focus hint: `/prune:handover focus on the auth refactor`.
+- **`/prune:resume`** — the zero-argument way back in. After `/clear`, instead of typing `@.handover-<sid>.md`, run this: it finds the newest brief on disk (workspace first, then `${TMPDIR:-/tmp}/`), absorbs it, moves it out of the repo, and continues from its Next steps. Exists because the `@` file picker is unreliable on the mobile and remote clients — which is exactly where you `/clear` and least want to be recalling a session id. Optional focus hint: `/prune:resume stick to the parser work`.
 - **`/prune:setup`** — onboarding diagnostic. Prints what's installed and the exact `statusLine` snippet to wire up the in-status-bar nudge.
 - **Statusline script** (`prune/scripts/statusline.sh`) — reads the active session's transcript, computes `input + cache_creation + cache_read` from the latest assistant message's `usage` block (same number `/context` shows), and emits a colored one-liner: dim under threshold, yellow at ~70%, bold-red with `📋 ctx Xk (Y%) — /prune:distill or /prune:handover` above. No background process, no MCP server, no extra launch flags. Wire it into your `settings.json` (`/prune:setup` prints the exact path).
 
@@ -30,6 +31,7 @@ Two plugins, install whichever you need:
 
 | You want… | Reach for | Why |
 | --- | --- | --- |
+| You've just `/clear`ed and want the last brief back | `/prune:resume` | No filename, no picker, no session id — finds the newest brief itself and carries on. The one that works from a phone. |
 | A long, branchy session distilled before `/clear` (you've lost track of what's load-bearing) | `/prune:distill` | Fresh subagent buckets the transcript; you only have to toggle. Best when the session is too big to remember, or context is already degraded. |
 | A quick brief from a still-fresh session (you remember roughly what happened) | `/prune:handover` | No subagent overhead, no transcript parsing — Claude writes from live memory. Faster, cheaper, no Haiku call. Use when you'd be embarrassed to spin up a bucketer for what's basically two threads of work. |
 | Passive awareness of context size while you work | Statusline (in `prune`) | Always-on `ctx Xk (Y%)` indicator. Color shift + nudge text once you cross threshold. Doesn't interrupt the model. |

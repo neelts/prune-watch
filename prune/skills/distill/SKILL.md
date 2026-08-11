@@ -256,6 +256,8 @@ Then print a short hand-off message — NOT the full brief, just the path and in
 > 1. Run `/clear` to reset the session.
 > 2. Type `@.prune-handover-XXXXXXXX.md` as your first message — the `@` picker autocompletes from `.prune-handover-`. Claude Code injects the brief, then the absorb footer instructs the new session to move the file to `${TMPDIR:-/tmp}/` so it doesn't linger in the repo.
 >
+> On mobile or remote clients, run `/prune:resume` instead — it finds the newest brief itself, with no filename to type and no file picker.
+>
 > The moved file stays recoverable in temp until system reboot — re-injectable from there if you need it again, or `rm` it any time.
 
 Do **not** run `/clear` yourself — it's a user command and applying it would happen before the operator's seen the hand-off message. Leave the operator in control.

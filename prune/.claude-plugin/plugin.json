@@ -1,7 +1,7 @@
 {
   "name": "prune",
-  "description": "Operator-guided context tools for Claude Code: /prune:distill (transcript-bucketing prune), /prune:handover (in-context brief), and a statusline indicator. The optional prune-watch plugin adds proactive channel nudges.",
-  "version": "0.3.0",
+  "description": "Operator-guided context tools for Claude Code: /prune:distill (transcript-bucketing prune), /prune:handover (in-context brief), /prune:resume (pick the newest brief back up with no filename to type), and a statusline indicator. The optional prune-watch plugin adds proactive channel nudges.",
+  "version": "0.4.0",
   "author": {
     "name": "neelts"
   },

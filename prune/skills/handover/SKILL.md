@@ -84,7 +84,7 @@ Print a short hand-off message — **NOT** the full brief, just the path and ins
 >
 > To apply:
 > 1. Run `/clear` to reset the session.
-> 2. Type `@.handover-XXXXXXXX.md` as your first message — the `@` picker autocompletes from `.handover-`. Claude Code injects the brief, then the absorb footer instructs the new session to move the file to `${TMPDIR:-/tmp}/` so it doesn't linger in the repo.
+> 2. Run `/prune:resume` — it finds this brief itself, no filename to type. (Or type `@.handover-XXXXXXXX.md` as your first message — the `@` picker autocompletes from `.handover-`. Claude Code injects the brief, then the absorb footer instructs the new session to move the file to `${TMPDIR:-/tmp}/` so it doesn't linger in the repo.) On mobile or remote clients prefer `/prune:resume` — the `@` picker is unreliable there.
 >
 > The moved file stays recoverable in temp until reboot — re-injectable from there if you need it again, or `rm` it any time.
 
