@@ -16,6 +16,32 @@ worst. This command replaces the picker with a filesystem lookup.
 `$1` is an optional focus hint. If non-empty, bias what you resume toward that
 thread rather than blindly taking the brief's first Next step.
 
+## Step 0 — Refuse to resume into a session that is already full
+
+```bash
+bash "/root/Dev/prune-watch/prune/scripts/session-freshness.sh"
+```
+
+Prints `STATE<TAB>LINES<TAB>TRANSCRIPT`, where STATE is `fresh`, `full`, or
+`unknown`.
+
+`/prune:resume` is meant to be the **first** thing a post-`/clear` session does.
+Run in a session that still has its context it is a no-op at best — the brief
+summarises what is already loaded — and harmful at worst, because Step 2 MOVES
+the brief out of the workspace into temp: the operator ends up with a stale file
+in temp, a session that never needed it, and nothing in the repo to resume from
+later. That happened on 2026-08-13.
+
+- **`fresh`** — carry on to Step 1.
+- **`full`** — STOP. Say in one line that this session still has its context
+  (quote the line count), that the brief was therefore not moved, and offer the
+  two things the operator probably meant: `/clear` first and re-run, or
+  `/prune:handover` to refresh the brief with what this session has done since.
+  Do not read the brief, do not move it.
+- **`unknown`** — no `CLAUDE_SESSION_ID` or no transcript found. Do not block on
+  it; say so in half a line and continue, since a wrong refusal is worse than a
+  redundant resume.
+
 ## Step 1 — Find the brief
 
 ```bash
