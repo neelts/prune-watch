@@ -2,3 +2,11 @@ CONTEXT.md
 node_modules/
 *.log
 
+# Per-machine session state: permission allow-rules Claude Code writes as you
+# approve tools. Machine- and pane-specific, never useful to another checkout.
+.claude/settings.local.json
+
+# Handover briefs live in the workspace only between /prune:handover and the
+# resume that absorbs them — a crash shouldn't leave one staged.
+.handover-*.md
+.prune-handover-*.md
