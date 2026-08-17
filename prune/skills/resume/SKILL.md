@@ -19,7 +19,7 @@ thread rather than blindly taking the brief's first Next step.
 ## Step 0 — Refuse to resume into a session that is already full
 
 ```bash
-bash "/root/Dev/prune-watch/prune/scripts/session-freshness.sh"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-freshness.sh"
 ```
 
 Prints `STATE<TAB>LINES<TAB>TRANSCRIPT`, where STATE is `fresh`, `full`, or

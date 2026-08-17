@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Onboarding for prune — prints what the plugin gives you, the exact statusLine snippet to wire into your Claude Code settings (so you see ctx-size + nudge in the status bar), and whether the optional prune-watch channel watcher is enabled in this session. Run once after installing.
+description: Onboarding for prune — prints what the plugin gives you, the exact statusLine snippet to wire into your Claude Code settings (so you see ctx-size + nudge in the status bar), whether the tmux auto-resume cycle is available in this session, and whether the optional prune-watch channel watcher is enabled. Run once after installing.
 disable-model-invocation: true
 allowed-tools: Bash(bash *) Bash(echo *) Bash(test *) Read
 ---
@@ -15,6 +15,8 @@ The operator just ran `/prune:setup`. Render the diagnostic block below verbatim
 
 - **`/prune:distill`** — operator-driven context prune. Reads this session's transcript, delegates bucketing to a fresh subagent, hands back a ranked toggle list, builds a seed brief for `/clear`. Always available.
 - **`/prune:handover`** — lighter cousin of `/prune:distill`. No subagent, no transcript parsing — Claude writes the brief itself from already-loaded conversation context. Faster; use when you still remember the session.
+- **`/prune:resume`** — the way back in after `/clear`: finds the newest brief on disk itself, absorbs it, moves it out of the repo, and carries on. No filename, no `@` picker — the one that works from a phone.
+- **Auto-resume** — when claude runs inside a tmux pane, `/prune:handover` and `/prune:distill` arm a detached watcher that runs the `/clear` → `/prune:resume` cycle for you once the turn ends. Set `PRUNE_AUTO_RESUME=0` to opt out; the diagnostic below reports whether it's available here.
 - **Statusline script** — a small bash script you can wire into Claude Code's `statusLine` setting. Shows `ctx Xk (Y%)` in your status bar; turns red with a `📋 ctx — /prune:distill or /prune:handover` nudge when context crosses the threshold. **This is the default nudge mechanism.** No background process, no MCP server, no extra launch flags.
 
 ## What the optional `prune-watch` plugin adds (only if separately installed)
@@ -33,7 +35,7 @@ The operator just ran `/prune:setup`. Render the diagnostic block below verbatim
 - **Resolved path** (use in your settings.json `statusLine.command`): !`echo "${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh"`
 - **Exists**: !`test -f "${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh" && echo "yes" || echo "NO — plugin install may be incomplete"`
 
-### Optional channel watcher
+### Session diagnostics — channel watcher and auto-resume
 
 !`bash ${CLAUDE_SKILL_DIR}/diagnose.sh ${CLAUDE_SESSION_ID}`
 

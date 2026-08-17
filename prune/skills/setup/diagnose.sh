@@ -60,3 +60,33 @@ if [ "$ENABLED" = "yes" ]; then
 else
   echo "**NOT ENABLED** — Claude Code wasn't launched with a \`--channels\` flag, so even if the \`prune-watch\` plugin is installed its notifications would be dropped. (The statusline indicator works regardless of this flag — wire it up via the \`statusLine\` snippet above, and channel watcher remains optional.)"
 fi
+
+echo
+echo "**Auto-resume (handover → /clear → /prune:resume, unattended):**"
+echo
+
+AR="$(dirname "$0")/../../scripts/auto-resume.sh"
+if [ ! -f "$AR" ]; then
+  echo "- **Script**: NOT FOUND at \`$AR\` — the prune plugin install looks incomplete."
+elif [ "${PRUNE_AUTO_RESUME:-1}" = "0" ]; then
+  echo "- **State**: DISABLED by \`PRUNE_AUTO_RESUME=0\` in this session's environment. \`/prune:handover\` will write the brief and leave \`/clear\` to you."
+else
+  PANEINFO=$(bash "$AR" check 2>/dev/null)
+  if [ -n "$PANEINFO" ]; then
+    echo "- **State**: AVAILABLE — this session runs in tmux pane \`$(echo "$PANEINFO" | cut -f1)\` (socket \`$(echo "$PANEINFO" | cut -f2)\`, access: $(echo "$PANEINFO" | cut -f3))."
+    echo "- **Effect**: \`/prune:handover\` and \`/prune:distill\` arm a detached watcher that waits for the turn to end, sends \`/clear\`, then sends \`/prune:resume\`. Abort with \`kill <pid>\` (the pid is printed in the hand-off message) or by typing into the input box."
+    echo "- **Log**: \`${TMPDIR:-/tmp}/prune-auto-resume.log\`"
+  else
+    echo "- **State**: NOT AVAILABLE — this session isn't in a tmux pane the script can reach, so \`/prune:handover\` falls back to telling you to run \`/clear\` and \`/prune:resume\` yourself."
+    echo "- **Note**: if claude DOES run under tmux but the tmux server belongs to another user (root running sessions as an unprivileged user), the script needs passwordless \`sudo tmux\` to reach that server's socket."
+  fi
+fi
+
+echo
+echo "**Plugin version (staleness check):**"
+echo
+
+DISK_VER=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$(dirname "$0")/../../.claude-plugin/plugin.json" 2>/dev/null | head -1)
+echo "- **On disk**: ${DISK_VER:-unknown}"
+echo "- **Loaded by this session**: whatever was on disk when claude started — plugin skills are read at session start, so edits to a locally-installed plugin do NOT reach a session that is already running."
+echo "- **If they differ**: restart claude (the session resumes with \`--resume\` under tmux) to pick up the newer skills. \`/prune:handover\` and \`/prune:distill\` print their own baked-in version for exactly this comparison."

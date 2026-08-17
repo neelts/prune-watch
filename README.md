@@ -13,7 +13,8 @@ Two plugins, install whichever you need:
 - **`/prune:distill`** — read this session's transcript, delegate bucketing to a fresh Haiku subagent (`transcript-bucketer`), present a ranked toggle list (`NEW` vs `DOC` axis based on whether the bucket's content is already in your CLAUDE.md), let you accept/customize/cancel via dialog, write a seed brief to `<cwd>/.prune-handover-<sid>.md`. After `/clear` you inject the brief by typing `@.prune-handover-<sid>.md`; the post-`/clear` Claude reads it, then moves the file to `${TMPDIR:-/tmp}/` so it doesn't pollute the repo (recoverable until reboot).
 - **`/prune:handover`** — simpler cousin of `/prune:distill`. No subagent, no transcript bucketing — Claude writes the brief itself from already-loaded conversation context, straight to `<cwd>/.handover-<sid>.md`. Same `@`-mention re-injection flow. Optional focus hint: `/prune:handover focus on the auth refactor`.
 - **`/prune:resume`** — the zero-argument way back in. After `/clear`, instead of typing `@.handover-<sid>.md`, run this: it finds the newest brief on disk (workspace first, then `${TMPDIR:-/tmp}/`), absorbs it, moves it out of the repo, and continues from its Next steps. Exists because the `@` file picker is unreliable on the mobile and remote clients — which is exactly where you `/clear` and least want to be recalling a session id. Optional focus hint: `/prune:resume stick to the parser work`.
-- **`/prune:setup`** — onboarding diagnostic. Prints what's installed and the exact `statusLine` snippet to wire up the in-status-bar nudge.
+- **Auto-resume** (`prune/scripts/auto-resume.sh`) — closes the loop when claude runs inside **tmux**. `/prune:handover` and `/prune:distill` end by arming a detached watcher that waits for the turn to finish, sends `/clear` to the pane, waits a few seconds, and sends `/prune:resume`. You write nothing; the session comes back up already carrying the brief. Opt out with `PRUNE_AUTO_RESUME=0`, abort a pending cycle with `kill <pid>` (printed in the hand-off) or by typing anything into the input box. See [Auto-resume](#auto-resume-the-unattended-clear--resume-cycle).
+- **`/prune:setup`** — onboarding diagnostic. Prints what's installed, whether auto-resume can reach this session's tmux pane, and the exact `statusLine` snippet to wire up the in-status-bar nudge.
 - **Statusline script** (`prune/scripts/statusline.sh`) — reads the active session's transcript, computes `input + cache_creation + cache_read` from the latest assistant message's `usage` block (same number `/context` shows), and emits a colored one-liner: dim under threshold, yellow at ~70%, bold-red with `📋 ctx Xk (Y%) — /prune:distill or /prune:handover` above. No background process, no MCP server, no extra launch flags. Wire it into your `settings.json` (`/prune:setup` prints the exact path).
 
 ### `prune-watch` — the optional channel watcher
@@ -46,7 +47,7 @@ Rule of thumb: **install `prune` and wire the statusline.** Add `prune-watch` on
 2. Context crosses ~70% of threshold (default 140k). Status bar turns yellow: `ctx 145k (15%)`.
 3. Context crosses threshold (default 200k). Status bar turns bold-red: `📋 ctx 210k (21%) — /prune:distill or /prune:handover`.
 4. You decide: do you remember the session well enough?
-   - Yes → run `/prune:handover` with an optional focus hint. Brief written; you `/clear` and `@.handover-<sid>.md`.
+   - Yes → run `/prune:handover` with an optional focus hint. Brief written; in tmux the `/clear` → `/prune:resume` cycle then runs itself (see below), otherwise you `/clear` and `@.handover-<sid>.md`.
    - No → run `/prune:distill`. Skill auto-snoozes the channel for 15 minutes (if the watcher's installed), delegates to `transcript-bucketer`, prints a ranked toggle list:
      ```
      Prune proposal — ctx ~210k tokens, 8 buckets
@@ -60,8 +61,45 @@ Rule of thumb: **install `prune` and wire the statusline.** Add `prune-watch` on
      ```
 5. The skill prompts (via `AskUserQuestion` or plain-text fallback): `Accept` / `Accept & note` / `Customize` / `Cancel`. `Accept & note` additionally appends the kept `NEW` buckets to your CLAUDE.md as a dated session-notes block you can curate later.
 6. You pick `Accept`. Brief is written to `.prune-handover-1f71f5fb.md` (named after the first 8 chars of your session id).
-7. You run `/clear`, then type `@.prune-handover-1f71f5fb.md`. The fresh Claude reads the brief, then moves the file to `/tmp/` per the absorb footer.
+7. You run `/clear`, then type `@.prune-handover-1f71f5fb.md`. The fresh Claude reads the brief, then moves the file to `/tmp/` per the absorb footer. In tmux, step 7 happens on its own — see below.
 8. You're back to work with exactly the context you kept.
+
+## Auto-resume — the unattended `/clear` → `/prune:resume` cycle
+
+The brief is worthless until someone runs `/clear` and then `/prune:resume`. Both are **client-side commands**: they're typed into the input box and handled by the Claude Code TUI, so neither the model nor a skill can run them. That's why the flow above ends with homework.
+
+When claude runs inside a **tmux pane**, they can be typed from outside. `/prune:handover` and `/prune:distill` finish by running:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/auto-resume.sh" arm --brief ".handover-<sid>.md"
+```
+
+which forks a detached watcher and prints `armed<TAB>PID<TAB>PANE<TAB>LOG`. The watcher then:
+
+1. **Waits for the turn to end** — polls the bottom of the pane for Claude Code's spinner line (`✳ Synthesizing… (3m 58s · ↓ 8.4k tokens)`), requiring 5 consecutive idle seconds — which doubles as your grace window to abort. Gives up after 5 minutes. If the pane goes busy *again* after it has gone quiet, you've started a new turn, and the cycle aborts rather than clearing work the brief never saw.
+2. **Re-checks the brief is on disk and non-empty.** A `Write` that silently failed must never cost a session its context.
+3. **Re-checks the input box is empty.** If you've started typing, the cycle aborts rather than gluing `/clear` onto your half-written message. Typing *is* the abort gesture.
+4. **Sends `/clear`**, as text then `Enter` a second later (the TUI needs the beat to settle its slash-command menu).
+5. **Verifies the clear landed** — a working session fills the pane, a cleared one collapses to a banner and an empty box. If the screen didn't collapse, it stops there rather than typing the next command into whatever UI is actually open.
+6. **Sends `/prune:resume`** (plus your focus hint, if you gave one). The fresh session finds the brief itself and carries on.
+
+Everything is logged to `${TMPDIR:-/tmp}/prune-auto-resume.log`.
+
+**Requirements.** tmux, and access to the tmux server socket. If the socket belongs to another user — the shape where root's tmux runs sessions as an unprivileged user — the script escalates with `sudo -n tmux -S <socket>`, so that user needs passwordless sudo for tmux. No access means no auto-resume: the skills print the manual instructions instead and nothing breaks. `/prune:setup` tells you which case you're in.
+
+**Controls.**
+
+| | |
+| --- | --- |
+| opt out permanently | `PRUNE_AUTO_RESUME=0` in the environment claude runs in |
+| abort a pending cycle | `kill <pid>` (pid is in the hand-off message), or `bash auto-resume.sh abort`, or just type something |
+| detect only | `bash auto-resume.sh check` → `PANE<TAB>SOCKET<TAB>VIA`, exit 3 if not in tmux |
+| rehearse without sending keys | `bash auto-resume.sh arm --brief <path> --dry-run` |
+| `PRUNE_AUTO_RESUME_IDLE_TIMEOUT` | max seconds to wait for the turn to end (default 300) |
+| `PRUNE_AUTO_RESUME_SETTLE` | consecutive idle seconds before acting, i.e. the grace window (default 5) |
+| `PRUNE_AUTO_RESUME_GAP` | seconds between `/clear` and `/prune:resume` (default 6) |
+
+**Backstop.** If a `/clear` somehow doesn't take and `/prune:resume` runs anyway, the resume skill's own freshness check sees a session that still has its context and refuses — it won't move the brief out of the workspace. The failure mode is a no-op, not a lost brief.
 
 ## Installation
 
@@ -180,6 +218,9 @@ All env vars, all optional:
 - **Linux-only `/proc` walk for channel discovery.** The discovery uses `/proc/<pid>/cmdline` and `/proc/<pid>/cwd` to find the parent claude. Non-Linux falls through to a heuristic blind scan of project dirs (with `/tmp/` filtered to avoid stale leftovers). The statusline works on macOS (uses `stat -f` fallback).
 - **Plain-text token estimator (with a real fallback).** Both the statusline and the channel server read the most recent assistant message's `usage` block (`input + cache_creation + cache_read`) — same number `/context` shows. Statusline falls back to coarse grep math if `jq` isn't on PATH; server falls back to bytes ÷ 4 only if no usage block can be found yet.
 - **No automatic CLAUDE.md mutation.** The `Accept & note` option in `/prune:distill` is opt-in and appends a clearly-marked block at the end of CLAUDE.md, never modifies existing content. You curate the block when you have time.
+- **Auto-resume drives the TUI from outside, and screen-scrapes to do it safely.** There is no API for "is this session idle" or "did that clear land", so the watcher reads the pane with `tmux capture-pane` and matches Claude Code's spinner line and screen density. Both are cosmetic details of a TUI that can change between releases. Every check is written to fail *closed* — an unrecognised screen aborts the cycle and leaves the manual flow intact — but expect to re-tune the patterns in `auto-resume.sh` (`pane_busy`, `pane_nonblank`) if a future Claude Code redesigns its footer.
+- **Plugin skills load at session start.** Editing a SKILL.md — even in a locally-installed `source: directory` marketplace — does not reach a session that is already running; it keeps executing the body it booted with. Restart claude after changing a skill. `/prune:handover` and `/prune:distill` print their baked-in version next to the on-disk one so a stale session tells you itself, and `/prune:setup` reports the on-disk version.
+- **Auto-resume needs a real terminal multiplexer.** Not tmux — for example a bare SSH session, a GUI terminal, or the web client — means no pane to type into, and the skills fall back to printing the two manual steps.
 
 ## Repo layout
 
@@ -193,15 +234,19 @@ prune-watch/                       # marketplace root (this GitHub repo)
 │   ├── .claude-plugin/
 │   │   └── plugin.json
 │   ├── skills/
-│   │   ├── prune/SKILL.md         # /prune:distill orchestrator
+│   │   ├── distill/SKILL.md       # /prune:distill orchestrator
 │   │   ├── handover/SKILL.md      # /prune:handover bucketer-free brief
+│   │   ├── resume/SKILL.md        # /prune:resume zero-argument pickup
 │   │   └── setup/
 │   │       ├── SKILL.md           # /prune:setup onboarding diagnostic
-│   │       └── diagnose.sh        # state.json + channel-flag detection
+│   │       └── diagnose.sh        # state.json, channel-flag + auto-resume detection
 │   ├── agents/
 │   │   └── transcript-bucketer.md # the Haiku subagent /prune:distill calls
 │   └── scripts/
-│       └── statusline.sh          # the in-status-bar context indicator
+│       ├── statusline.sh          # the in-status-bar context indicator
+│       ├── find-handover.sh       # newest-brief lookup for /prune:resume
+│       ├── session-freshness.sh   # fresh-vs-full guard for /prune:resume
+│       └── auto-resume.sh         # tmux watcher: /clear → /prune:resume, unattended
 └── watcher/                       # optional plugin: channel watcher
     ├── .claude-plugin/
     │   └── plugin.json

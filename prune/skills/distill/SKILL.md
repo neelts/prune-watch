@@ -19,6 +19,10 @@ Session info (expanded before you see this):
 - **Handover file path** (workspace; write here so the operator can `@`-mention with project-tree autocomplete): !`echo ".prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Post-absorb destination** (where the post-`/clear` Claude moves it after reading): !`echo "${TMPDIR:-/tmp}/prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Operator hint**: `$ARGUMENTS`
+- **Skill version** (baked into this file at write time): `0.5.0`
+- **Plugin version on disk right now**: !`sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null | head -1`
+
+Plugin skills load **when the session starts**, so a long-running session keeps running the version it booted with. If those two versions differ, mention it in one line at the end of your hand-off ("this session loaded prune X, disk has Y — restart claude to pick up the newer skill") and continue regardless.
 
 ## Step 1 — Sanity check
 
@@ -246,9 +250,27 @@ After writing, tell the operator briefly: *"Also appended N notes to CLAUDE.md �
 
 **Save the seed brief to disk** using the `Write` tool with path = the **Handover file path** value from the session-info block at the top (e.g. `.prune-handover-1f71f5fb.md`). The path is project-root-relative — that way the operator's `@`-mention picker autocompletes it cleanly from `@.p<tab>`. The post-`/clear` Claude moves it out of the workspace as part of absorbing it, so it doesn't sit in git status long.
 
-This file is the carryover artefact — the operator will inject it into the fresh post-`/clear` session via Claude Code's `@` file-mention picker.
+This file is the carryover artefact — the operator will inject it into the fresh post-`/clear` session via Claude Code's `@` file-mention picker, or `/prune:resume` will pick it up for them.
 
-Then print a short hand-off message — NOT the full brief, just the path and instructions. Don't render the brief inline; the file IS the deliverable. Substitute the actual filename into the message:
+**Then arm the auto-resume cycle** (same mechanism `/prune:handover` uses). `/clear` and `/prune:resume` are client-side commands you cannot run — but when claude sits in a tmux pane they can be typed from outside once this turn ends:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/auto-resume.sh" arm --brief ".prune-handover-XXXXXXXX.md"
+```
+
+(If `${CLAUDE_PLUGIN_ROOT}` reached you unexpanded, find the script with `find ~/.claude/plugins -name auto-resume.sh 2>/dev/null | head -1`; if it isn't there, skip arming and use the manual hand-off.)
+
+It prints `armed<TAB>PID<TAB>PANE<TAB>LOG`, or `skipped<TAB>REASON` when there is no tmux pane (or `PRUNE_AUTO_RESUME=0`). The watcher waits for this turn to end, re-checks that the brief is on disk and the input box is empty, then sends `/clear`, waits, and sends `/prune:resume`. Skip arming if the operator chose `Cancel` in Step 4 — there is no brief to resume into.
+
+Then print a short hand-off message — NOT the full brief, just the path and what happens next. Don't render the brief inline; the file IS the deliverable. Substitute the actual filename into the message.
+
+**If armed:**
+
+> Prune ready. Brief saved to `.prune-handover-XXXXXXXX.md` (N kept buckets, ~Xk tokens).
+>
+> Auto-resume armed (pid `PID`): when this turn ends I'll `/clear` this pane and run `/prune:resume` in the fresh session. To stop it: `kill PID`, or just start typing — the watcher aborts if the input box isn't empty.
+
+**If skipped** (say why in half a line, then):
 
 > Prune ready. Brief saved to `.prune-handover-XXXXXXXX.md` (N kept buckets, ~Xk tokens).
 >
@@ -260,7 +282,7 @@ Then print a short hand-off message — NOT the full brief, just the path and in
 >
 > The moved file stays recoverable in temp until system reboot — re-injectable from there if you need it again, or `rm` it any time.
 
-Do **not** run `/clear` yourself — it's a user command and applying it would happen before the operator's seen the hand-off message. Leave the operator in control.
+Do **not** try to run `/clear` yourself as a tool call — it's a client-side command, and the armed watcher is the only thing that gets to type it.
 
 After printing the hand-off message, if the watcher's unsnooze tool is available call it to re-arm nudges immediately. If the watcher plugin isn't installed, skip — the auto-snooze from Step 2 was a no-op anyway.
 
