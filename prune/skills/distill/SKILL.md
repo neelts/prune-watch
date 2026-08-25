@@ -19,7 +19,7 @@ Session info (expanded before you see this):
 - **Handover file path** (workspace; write here so the operator can `@`-mention with project-tree autocomplete): !`echo ".prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Post-absorb destination** (where the post-`/clear` Claude moves it after reading): !`echo "${TMPDIR:-/tmp}/prune-handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Operator hint**: `$ARGUMENTS`
-- **Skill version** (baked into this file at write time): `0.5.0`
+- **Skill version** (baked into this file at write time): `0.5.1`
 - **Plugin version on disk right now**: !`sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null | head -1`
 
 Plugin skills load **when the session starts**, so a long-running session keeps running the version it booted with. If those two versions differ, mention it in one line at the end of your hand-off ("this session loaded prune X, disk has Y — restart claude to pick up the newer skill") and continue regardless.

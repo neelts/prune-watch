@@ -1,7 +1,7 @@
 {
   "name": "prune-watch",
   "description": "Optional channel watcher for prune. Monitors the active session transcript and pushes a one-way nudge when context crosses ~200k tokens. Requires --dangerously-load-development-channels at claude launch. Ships the snooze/unsnooze/check MCP tools that /prune:distill integrates with when present.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": {
     "name": "neelts"
   },

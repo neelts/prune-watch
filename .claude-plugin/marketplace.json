@@ -7,14 +7,14 @@
   },
   "metadata": {
     "description": "Operator-guided context pruning for Claude Code. Two plugins: prune (skills + statusline, the everyday tool) and prune-watch (optional channel-based proactive nudges).",
-    "version": "0.5.0"
+    "version": "0.5.1"
   },
   "plugins": [
     {
       "name": "prune",
       "source": "./prune",
       "description": "Slash commands /prune:distill (transcript-bucketing prune), /prune:handover (in-context brief), /prune:resume (pick the newest brief back up, no filename to type), /prune:setup (onboarding diagnostic), an unattended tmux /clear → /prune:resume cycle, plus a statusline script that surfaces a visible nudge when context crosses the prune threshold. No background process, no MCP server — install this one for the everyday flow.",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "author": { "name": "neelts" },
       "homepage": "https://github.com/neelts/prune-watch",
       "category": "workflow",
@@ -24,7 +24,7 @@
       "name": "prune-watch",
       "source": "./watcher",
       "description": "Optional companion to the prune plugin. Adds the original channel watcher: a background MCP server that tails the active transcript and pushes a one-way <channel> nudge when context crosses ~200k tokens. Also exposes check/snooze/unsnooze MCP tools that /prune:distill integrates with automatically when this plugin is installed. Requires --dangerously-load-development-channels at claude launch to deliver nudges.",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "author": { "name": "neelts" },
       "homepage": "https://github.com/neelts/prune-watch",
       "category": "workflow",

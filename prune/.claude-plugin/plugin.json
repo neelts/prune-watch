@@ -1,7 +1,7 @@
 {
   "name": "prune",
   "description": "Operator-guided context tools for Claude Code: /prune:distill (transcript-bucketing prune), /prune:handover (in-context brief), /prune:resume (pick the newest brief back up with no filename to type), an unattended tmux /clear → /prune:resume cycle, and a statusline indicator. The optional prune-watch plugin adds proactive channel nudges.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": {
     "name": "neelts"
   },

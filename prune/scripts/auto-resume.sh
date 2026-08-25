@@ -28,6 +28,7 @@
 #   PRUNE_AUTO_RESUME_IDLE_TIMEOUT max seconds to wait for the turn to end (default 300)
 #   PRUNE_AUTO_RESUME_SETTLE       consecutive idle seconds before acting (default 5)
 #   PRUNE_AUTO_RESUME_GAP          seconds between /clear and /prune:resume (default 6)
+#   PRUNE_AUTO_RESUME_BOX_WAIT     seconds to wait for a dirty input box to clear (default 30)
 #
 # Output (arm): one tab-separated line
 #   armed<TAB>PID<TAB>PANE<TAB>LOGFILE
@@ -38,6 +39,8 @@ TMPD="${TMPDIR:-/tmp}"; TMPD="${TMPD%/}"
 IDLE_TIMEOUT="${PRUNE_AUTO_RESUME_IDLE_TIMEOUT:-300}"
 SETTLE="${PRUNE_AUTO_RESUME_SETTLE:-5}"
 GAP="${PRUNE_AUTO_RESUME_GAP:-6}"
+BOX_WAIT="${PRUNE_AUTO_RESUME_BOX_WAIT:-30}"
+LAST_TYPED=""
 LOG="$TMPD/prune-auto-resume.log"
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG" 2>/dev/null; }
@@ -140,21 +143,65 @@ pane_nonblank() {
 	tmx capture-pane -p -t "$PANE" 2>/dev/null | grep -c '[^[:space:]]'
 }
 
-# Anything the operator has typed into the input box. Sending keys on top of it
+# Anything the OPERATOR has typed into the input box. Sending keys on top of it
 # would submit their half-written message glued to ours, so we bail instead.
-# An empty box is not an empty line: Claude Code pads it with a non-breaking
-# space, which no [[:space:]] class in the C locale strips — hence the explicit
-# glyph list, applied as quoted (literal, locale-independent) substitutions.
+#
+# "Empty" is not an empty line, in two ways:
+#
+#  - the box is padded with a non-breaking space, which no [[:space:]] class in
+#    the C locale strips — hence the explicit glyph list, applied as quoted
+#    (literal, locale-independent) substitutions;
+#  - newer Claude Code builds park ghost text in the box — "<no suggestion>", an
+#    inline completion — which is not input at all. That cost a real handover on
+#    2026-08-25: the cycle armed, waited, and aborted on a box the operator had
+#    never touched.
+#
+# Ghost text is rendered faint (SGR 2) and typed text is not, so capture with -e
+# and drop the dim spans before reading what is left. The literal blocklist below
+# is the belt to that braces, for the day a build stops using SGR 2.
 input_content() {
-	local line nbsp g
+	local esc raw line nbsp g
+	esc=$(printf '\033')
 	printf -v nbsp '\302\240'
-	line=$(tail_lines 6 | grep -E '^[[:space:]]*(❯|>)' | tail -1)
+	raw=$(tmx capture-pane -p -e -t "$PANE" 2>/dev/null | tail -8 |
+		sed "s/${esc}\[2m[^${esc}]*${esc}\[[0-9;]*m//g; s/${esc}\[[0-9;]*m//g")
+	# Prefer the real prompt glyph; a bare '>' also matches transcript blockquotes.
+	line=$(printf '%s\n' "$raw" | grep -F '❯' | tail -1)
+	[ -n "$line" ] || line=$(printf '%s\n' "$raw" | grep -E '^[[:space:]]*>' | tail -1)
 	case "$line" in
 		*"❯"*) line="${line#*"❯"}" ;;
 		*">"*) line="${line#*">"}" ;;
 	esac
 	for g in "$nbsp" "▌" "█" "▏" "│"; do line="${line//"$g"/}"; done
-	printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+	line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+	case "$line" in
+		"<no suggestion>"|"Try \""*|"Ask anything"*) line="" ;;
+	esac
+	printf '%s' "$line"
+}
+
+# A dirty box is often just mid-word. Give the operator a moment to finish or
+# clear it before abandoning the cycle; only a box that STAYS dirty is an abort.
+box_clear_within() {
+	local limit="${1:-30}" waited=0
+	while :; do
+		LAST_TYPED=$(input_content)
+		[ -z "$LAST_TYPED" ] && return 0
+		[ "$waited" -ge "$limit" ] && return 1
+		sleep 2; waited=$((waited + 2))
+	done
+}
+
+# The watcher lives outside the session, so an abort was previously silent — the
+# operator saw a handover that simply never continued, and the broken guard went
+# unnoticed for a week (2026-08-25). tmux's own status line can say it without
+# typing anything into the pane. Lands only if a client is attached; the log and
+# the `arm` output carry it either way.
+notify() {
+	[ -n "$PANE" ] || return 0
+	tmx display-message -d 8000 -t "$PANE" "prune auto-resume: $1" 2>/dev/null ||
+		tmx display-message -t "$PANE" "prune auto-resume: $1" 2>/dev/null
+	return 0
 }
 
 send_line() {
@@ -182,6 +229,7 @@ watch_cycle() {
 		if pane_busy; then
 			if [ "$quiet" = 1 ]; then
 				log "ABORT: new turn started after the session went idle — operator is driving"
+				notify "aborted — you started a new turn"
 				return 1
 			fi
 			idle=0
@@ -193,23 +241,33 @@ watch_cycle() {
 		sleep 1; waited=$((waited + 1))
 	done
 	if [ "$idle" -lt "$SETTLE" ]; then
-		log "ABORT: pane still busy after ${IDLE_TIMEOUT}s"; return 1
+		log "ABORT: pane still busy after ${IDLE_TIMEOUT}s"
+		notify "aborted — turn still running after ${IDLE_TIMEOUT}s"
+		return 1
 	fi
 
 	# 2. Never clear a session whose brief did not actually land on disk.
 	if [ ! -s "$BRIEF" ]; then
-		log "ABORT: brief missing or empty: $BRIEF"; return 1
+		log "ABORT: brief missing or empty: $BRIEF"
+		notify "aborted — brief missing on disk"
+		return 1
 	fi
 
 	# 3. Never clear over something the operator is typing.
-	local typed; typed=$(input_content)
-	if [ -n "$typed" ]; then
-		log "ABORT: operator has text in the input box: $typed"; return 1
+	if ! box_clear_within "$BOX_WAIT"; then
+		log "ABORT: input box still holds operator text after ${BOX_WAIT}s: $LAST_TYPED"
+		notify "aborted — text in the input box"
+		return 1
+	fi
+	if pane_busy; then
+		log "ABORT: new turn started while waiting on the input box"
+		notify "aborted — you started a new turn"
+		return 1
 	fi
 
 	local before after
 	before=$(pane_nonblank)
-	send_line '/clear' || { log "ABORT: send-keys /clear failed"; return 1; }
+	send_line '/clear' || { log "ABORT: send-keys /clear failed"; notify "aborted — send-keys failed"; return 1; }
 	sleep "$GAP"
 
 	# Did the /clear actually land? Typing it opens the slash-command menu and
@@ -225,15 +283,17 @@ watch_cycle() {
 		log "clear confirmed (nonblank ${before} -> ${after})"
 	else
 		log "ABORT: /clear did not take (nonblank ${before} -> ${after}); leaving pane alone"
+		notify "aborted — /clear did not take"
 		return 1
 	fi
 
-	typed=$(input_content)
-	if [ -n "$typed" ]; then
-		log "ABORT: input box not empty after /clear: $typed"; return 1
+	if ! box_clear_within 10; then
+		log "ABORT: input box not empty after /clear: $LAST_TYPED"
+		notify "aborted — text in the input box after /clear"
+		return 1
 	fi
 
-	send_line "/prune:resume${HINT:+ $HINT}" || { log "ABORT: send-keys /prune:resume failed"; return 1; }
+	send_line "/prune:resume${HINT:+ $HINT}" || { log "ABORT: send-keys /prune:resume failed"; notify "aborted — send-keys failed"; return 1; }
 	log "cycle complete"
 }
 

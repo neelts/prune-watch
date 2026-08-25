@@ -18,7 +18,7 @@ Session info (expanded before you see this):
 - **Handover file path** (workspace; project-tree autocomplete from `@.h<tab>`): !`echo ".handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Post-absorb destination** (where the post-`/clear` Claude moves it after reading): !`echo "${TMPDIR:-/tmp}/handover-$(echo "${CLAUDE_SESSION_ID}" | head -c 8).md"`
 - **Operator hint**: `$ARGUMENTS`
-- **Skill version** (baked into this file at write time): `0.5.0`
+- **Skill version** (baked into this file at write time): `0.5.1`
 - **Plugin version on disk right now**: !`sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null | head -1`
 
 Claude Code loads plugin skills **when the session starts**, so a long-running
@@ -120,7 +120,10 @@ One tab-separated line comes back:
 The watcher refuses to clear if the brief is missing or empty, or if the operator
 has typed anything into the input box — so a half-written message is never
 swallowed by a `/clear`, and a failed `Write` never costs a session its context.
-Both cases land in the log and simply leave the manual flow available.
+A box that is merely mid-word gets 30 seconds to clear before that counts as an
+abort, and ghost text (`<no suggestion>`, inline completions) is not input. Every
+abort is logged and flashed on the pane's tmux status line, so a cycle that
+doesn't run says why.
 
 ## Step 4 — Hand off
 

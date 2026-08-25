@@ -78,12 +78,12 @@ which forks a detached watcher and prints `armed<TAB>PID<TAB>PANE<TAB>LOG`. The 
 
 1. **Waits for the turn to end** — polls the bottom of the pane for Claude Code's spinner line (`✳ Synthesizing… (3m 58s · ↓ 8.4k tokens)`), requiring 5 consecutive idle seconds — which doubles as your grace window to abort. Gives up after 5 minutes. If the pane goes busy *again* after it has gone quiet, you've started a new turn, and the cycle aborts rather than clearing work the brief never saw.
 2. **Re-checks the brief is on disk and non-empty.** A `Write` that silently failed must never cost a session its context.
-3. **Re-checks the input box is empty.** If you've started typing, the cycle aborts rather than gluing `/clear` onto your half-written message. Typing *is* the abort gesture.
+3. **Re-checks the input box is empty.** If you've started typing, the cycle waits up to 30s for the box to clear and only then aborts, rather than gluing `/clear` onto your half-written message. Typing *is* the abort gesture. Ghost text does not count as typing: newer Claude Code builds park `<no suggestion>` or an inline completion in the box, rendered faint (SGR 2), so the box is read from an escape-sequence capture with the dim spans stripped out.
 4. **Sends `/clear`**, as text then `Enter` a second later (the TUI needs the beat to settle its slash-command menu).
 5. **Verifies the clear landed** — a working session fills the pane, a cleared one collapses to a banner and an empty box. If the screen didn't collapse, it stops there rather than typing the next command into whatever UI is actually open.
 6. **Sends `/prune:resume`** (plus your focus hint, if you gave one). The fresh session finds the brief itself and carries on.
 
-Everything is logged to `${TMPDIR:-/tmp}/prune-auto-resume.log`.
+Every abort is logged to `${TMPDIR:-/tmp}/prune-auto-resume.log` **and** flashed on the pane's tmux status line, so a cycle that decides not to run tells you why instead of just never happening.
 
 **Requirements.** tmux, and access to the tmux server socket. If the socket belongs to another user — the shape where root's tmux runs sessions as an unprivileged user — the script escalates with `sudo -n tmux -S <socket>`, so that user needs passwordless sudo for tmux. No access means no auto-resume: the skills print the manual instructions instead and nothing breaks. `/prune:setup` tells you which case you're in.
 
@@ -98,6 +98,7 @@ Everything is logged to `${TMPDIR:-/tmp}/prune-auto-resume.log`.
 | `PRUNE_AUTO_RESUME_IDLE_TIMEOUT` | max seconds to wait for the turn to end (default 300) |
 | `PRUNE_AUTO_RESUME_SETTLE` | consecutive idle seconds before acting, i.e. the grace window (default 5) |
 | `PRUNE_AUTO_RESUME_GAP` | seconds between `/clear` and `/prune:resume` (default 6) |
+| `PRUNE_AUTO_RESUME_BOX_WAIT` | seconds to wait for a dirty input box to clear before aborting (default 30) |
 
 **Backstop.** If a `/clear` somehow doesn't take and `/prune:resume` runs anyway, the resume skill's own freshness check sees a session that still has its context and refuses — it won't move the brief out of the workspace. The failure mode is a no-op, not a lost brief.
 
@@ -218,6 +219,7 @@ All env vars, all optional:
 - **Linux-only `/proc` walk for channel discovery.** The discovery uses `/proc/<pid>/cmdline` and `/proc/<pid>/cwd` to find the parent claude. Non-Linux falls through to a heuristic blind scan of project dirs (with `/tmp/` filtered to avoid stale leftovers). The statusline works on macOS (uses `stat -f` fallback).
 - **Plain-text token estimator (with a real fallback).** Both the statusline and the channel server read the most recent assistant message's `usage` block (`input + cache_creation + cache_read`) — same number `/context` shows. Statusline falls back to coarse grep math if `jq` isn't on PATH; server falls back to bytes ÷ 4 only if no usage block can be found yet.
 - **No automatic CLAUDE.md mutation.** The `Accept & note` option in `/prune:distill` is opt-in and appends a clearly-marked block at the end of CLAUDE.md, never modifies existing content. You curate the block when you have time.
+- **The input box is never empty, exactly.** It is padded with a non-breaking space (which `[[:space:]]` won't strip in the C locale), and newer builds park ghost text in it. Both were found the hard way — the ghost text aborted a real handover on 2026-08-25, silently. Faintness (SGR 2) is what separates ghost text from typed text today; there is a literal blocklist behind it for when that stops being true.
 - **Auto-resume drives the TUI from outside, and screen-scrapes to do it safely.** There is no API for "is this session idle" or "did that clear land", so the watcher reads the pane with `tmux capture-pane` and matches Claude Code's spinner line and screen density. Both are cosmetic details of a TUI that can change between releases. Every check is written to fail *closed* — an unrecognised screen aborts the cycle and leaves the manual flow intact — but expect to re-tune the patterns in `auto-resume.sh` (`pane_busy`, `pane_nonblank`) if a future Claude Code redesigns its footer.
 - **Plugin skills load at session start.** Editing a SKILL.md — even in a locally-installed `source: directory` marketplace — does not reach a session that is already running; it keeps executing the body it booted with. Restart claude after changing a skill. `/prune:handover` and `/prune:distill` print their baked-in version next to the on-disk one so a stale session tells you itself, and `/prune:setup` reports the on-disk version.
 - **Auto-resume needs a real terminal multiplexer.** Not tmux — for example a bare SSH session, a GUI terminal, or the web client — means no pane to type into, and the skills fall back to printing the two manual steps.
